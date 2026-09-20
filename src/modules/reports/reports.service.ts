@@ -228,7 +228,7 @@ export async function getSalesReport(query: {
 
   const [items, total] = await Promise.all([
     SalesOrder.find(filter)
-      .populate('customer', 'name code')
+      .populate('customer', 'name')
       .populate('warehouse', 'name')
       .sort({ createdAt: -1 })
       .skip(skip)

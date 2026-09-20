@@ -4,6 +4,13 @@ import { sendResponse } from '../../common/utils/response';
 import * as itemService from './item.service';
 import { createItemSchema, updateItemSchema } from './item.validator';
 import { AuthRequest } from '../../common/middleware/protect';
+import { z } from 'zod';
+
+export const generateSku = asyncHandler(async (req: Request, res: Response) => {
+  const { name } = z.object({ name: z.string().min(1) }).parse(req.query);
+  const sku = await itemService.generateSKU(name);
+  sendResponse(res, 200, { sku }, 'SKU generated');
+});
 
 export const getItems = asyncHandler(async (req: Request, res: Response) => {
   const { items, pagination } = await itemService.getItems(req.query as Record<string, unknown>);
@@ -30,9 +37,4 @@ export const updateItem = asyncHandler(async (req: Request, res: Response) => {
 export const deleteItem = asyncHandler(async (req: Request, res: Response) => {
   await itemService.deleteItem(req.params.id);
   sendResponse(res, 200, null, 'Item deactivated');
-});
-
-export const getCategories = asyncHandler(async (_req: Request, res: Response) => {
-  const categories = await itemService.getItemCategories();
-  sendResponse(res, 200, { categories }, 'Categories fetched');
 });

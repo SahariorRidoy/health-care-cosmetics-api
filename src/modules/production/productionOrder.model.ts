@@ -18,6 +18,8 @@ export interface IProductionOrderDocument extends Document {
   plannedQty: number;
   actualOutputQty: number;
   wastageQty: number;
+  totalMaterialCost: number;  // calculated on completion
+  costPerUnit: number;        // totalMaterialCost / actualOutputQty
   status: ProductionStatus;
   materials: IMaterialLine[];
   startDate?: Date;
@@ -49,6 +51,8 @@ const productionOrderSchema = new Schema<IProductionOrderDocument>(
     plannedQty: { type: Number, required: true, min: 0.001 },
     actualOutputQty: { type: Number, default: 0, min: 0 },
     wastageQty: { type: Number, default: 0, min: 0 },
+    totalMaterialCost: { type: Number, default: 0, min: 0 },
+    costPerUnit: { type: Number, default: 0, min: 0 },
     status: {
       type: String,
       enum: ['DRAFT', 'IN_PROGRESS', 'COMPLETED', 'CLOSED'],

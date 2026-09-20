@@ -6,12 +6,13 @@ export interface IItemDocument extends Document {
   name: string;
   sku: string;
   type: ItemType;
-  category: string;
   description?: string;
   baseUom: Types.ObjectId;
-  reorderLevel: number;
+  supplier?: Types.ObjectId;
   currentStock: number;
+  reorderLevel: number;
   costPrice: number;
+  lastPurchasePrice: number;
   salePrice?: number;
   isActive: boolean;
   createdBy?: Types.ObjectId;
@@ -28,12 +29,13 @@ const itemSchema = new Schema<IItemDocument>(
       required: true,
       enum: ['RAW_MATERIAL', 'PACKAGING', 'SEMI_FINISHED', 'FINISHED_GOOD'],
     },
-    category: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
     baseUom: { type: Schema.Types.ObjectId, ref: 'UOM', required: true },
-    reorderLevel: { type: Number, default: 0, min: 0 },
+    supplier: { type: Schema.Types.ObjectId, ref: 'Supplier' },
     currentStock: { type: Number, default: 0 },
-    costPrice: { type: Number, required: true, min: 0 },
+    reorderLevel: { type: Number, default: 0, min: 0 },
+    costPrice: { type: Number, default: 0, min: 0 },
+    lastPurchasePrice: { type: Number, default: 0, min: 0 },
     salePrice: { type: Number, min: 0 },
     isActive: { type: Boolean, default: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -41,8 +43,8 @@ const itemSchema = new Schema<IItemDocument>(
   { timestamps: true },
 );
 
-itemSchema.index({ name: 'text', sku: 'text', category: 'text' });
+itemSchema.index({ name: 'text', sku: 'text' });
 itemSchema.index({ type: 1, isActive: 1 });
-itemSchema.index({ currentStock: 1 });
+itemSchema.index({ supplier: 1 });
 
 export const Item = mongoose.model<IItemDocument>('Item', itemSchema);

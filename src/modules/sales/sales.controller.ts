@@ -16,30 +16,30 @@ import {
 
 export const getSalesOrders = asyncHandler(async (req: Request, res: Response) => {
   const { items, pagination } = await salesService.getSalesOrders(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { orders: items }, 'Sales orders fetched', pagination);
+  sendResponse(res, 200, { salesOrders: items }, 'Sales orders fetched', pagination);
 });
 
 export const getSalesOrder = asyncHandler(async (req: Request, res: Response) => {
   const order = await salesService.getSalesOrderById(req.params.id);
-  sendResponse(res, 200, { order }, 'Sales order fetched');
+  sendResponse(res, 200, { salesOrder: order }, 'Sales order fetched');
 });
 
 export const createSalesOrder = asyncHandler(async (req: Request, res: Response) => {
   const data = createSalesOrderSchema.parse(req.body);
   const order = await salesService.createSalesOrder(data, (req as AuthRequest).user!.userId);
-  sendResponse(res, 201, { order }, 'Sales order created');
+  sendResponse(res, 201, { salesOrder: order }, 'Sales order created');
 });
 
 export const updateSalesOrder = asyncHandler(async (req: Request, res: Response) => {
   const data = updateSalesOrderSchema.parse(req.body);
   const order = await salesService.updateSalesOrder(req.params.id, data);
-  sendResponse(res, 200, { order }, 'Sales order updated');
+  sendResponse(res, 200, { salesOrder: order }, 'Sales order updated');
 });
 
 export const updateSalesOrderStatus = asyncHandler(async (req: Request, res: Response) => {
   const { status } = updateSalesOrderStatusSchema.parse(req.body);
   const order = await salesService.updateSalesOrderStatus(req.params.id, status, (req as AuthRequest).user!.userId);
-  sendResponse(res, 200, { order }, `Sales order ${status.toLowerCase()}`);
+  sendResponse(res, 200, { salesOrder: order }, `Sales order ${status.toLowerCase()}`);
 });
 
 export const deleteSalesOrder = asyncHandler(async (req: Request, res: Response) => {

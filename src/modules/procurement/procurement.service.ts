@@ -5,11 +5,11 @@ import { PurchaseOrder } from './purchaseOrder.model';
 import { Supplier } from './supplier.model';
 import { Warehouse } from '../warehouse/warehouse.model';
 import { Batch } from '../inventory/batch.model';
+import { Item } from '../inventory/item.model';
 import { postMovement } from '../inventory/stock.service';
+import { convertQty } from '../inventory/uom.service';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
-
-// ── GR Number generator ───────────────────────────────────────────────────────
 
 async function generateGRNumber(): Promise<string> {
   const date = new Date();
@@ -50,7 +50,6 @@ export async function createGoodsReceipt(data: {
     const grNumber = await generateGRNumber();
     const totalAmount = data.items.reduce((sum, i) => sum + i.receivedQty * i.unitPrice, 0);
 
-    // Build GR items with orderedQty from PO
     const grItems = data.items.map((i) => {
       const poItem = po.items.find((p) => String(p.item) === i.item);
       return {
@@ -80,13 +79,12 @@ export async function createGoodsReceipt(data: {
       { session },
     );
 
-    // Post stock movements for each item
-    for (const item of data.items) {
+    for (const grItem of data.items) {
       await postMovement({
         type: 'PURCHASE_RECEIPT',
-        item: item.item,
+        item: grItem.item,
         warehouse: data.warehouse,
-        quantity: item.receivedQty,
+        quantity: grItem.receivedQty,
         reference: grNumber,
         referenceModel: 'GoodsReceipt',
         referenceId: gr._id as unknown as string,
@@ -95,30 +93,48 @@ export async function createGoodsReceipt(data: {
         session,
       });
 
-      // Create/update batch if batchNumber provided
-      if (item.batchNumber) {
-        await Batch.findOneAndUpdate(
-          { batchNumber: item.batchNumber.toUpperCase(), item: item.item, warehouse: data.warehouse },
+      const itemDoc = await Item.findById(grItem.item).select('baseUom costPrice').session(session);
+      if (itemDoc) {
+        let costPricePerBaseUnit = grItem.unitPrice;
+        if (String(grItem.uom) !== String(itemDoc.baseUom)) {
+          try {
+            const factor = await convertQty(1, String(grItem.uom), String(itemDoc.baseUom));
+            costPricePerBaseUnit = grItem.unitPrice / factor;
+          } catch {
+            costPricePerBaseUnit = grItem.unitPrice;
+          }
+        }
+        await Item.findByIdAndUpdate(
+          grItem.item,
           {
-            $inc: { quantity: item.receivedQty },
-            $setOnInsert: { expiryDate: item.expiryDate, createdBy },
+            lastPurchasePrice: grItem.unitPrice,
+            costPrice: Math.round(costPricePerBaseUnit * 1000000) / 1000000,
+          },
+          { session },
+        );
+      }
+
+      if (grItem.batchNumber) {
+        await Batch.findOneAndUpdate(
+          { batchNumber: grItem.batchNumber.toUpperCase(), item: grItem.item, warehouse: data.warehouse },
+          {
+            $inc: { quantity: grItem.receivedQty },
+            $setOnInsert: { expiryDate: grItem.expiryDate, createdBy },
           },
           { upsert: true, session },
         );
       }
     }
 
-    // Update PO receivedQty per line and status
-    for (const item of data.items) {
+    for (const grItem of data.items) {
       await PurchaseOrder.updateOne(
-        { _id: data.purchaseOrder, 'items.item': item.item },
-        { $inc: { 'items.$.receivedQty': item.receivedQty } },
+        { _id: data.purchaseOrder, 'items.item': grItem.item },
+        { $inc: { 'items.$.receivedQty': grItem.receivedQty } },
         { session },
       );
     }
     await PurchaseOrder.findByIdAndUpdate(data.purchaseOrder, { status: 'RECEIVED' }, { session });
 
-    // Increase supplier balance (we now owe them)
     await Supplier.findByIdAndUpdate(
       po.supplier,
       { $inc: { balance: Math.round(totalAmount * 100) / 100 } },
@@ -140,12 +156,14 @@ export async function getGoodsReceipts(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.purchaseOrder) filter.purchaseOrder = query.purchaseOrder;
   if (query.supplier) filter.supplier = query.supplier;
+  if (query.item) filter['items.item'] = query.item;
 
   const [items, total] = await Promise.all([
     GoodsReceipt.find(filter)
-      .populate('supplier', 'name code')
+      .populate('supplier', 'name')
       .populate('purchaseOrder', 'poNumber')
       .populate('warehouse', 'name code')
+      .populate('items.item', 'name sku')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -157,7 +175,7 @@ export async function getGoodsReceipts(query: Record<string, unknown>) {
 
 export async function getGoodsReceiptById(id: string) {
   const gr = await GoodsReceipt.findById(id)
-    .populate('supplier', 'name code')
+    .populate('supplier', 'name')
     .populate('purchaseOrder', 'poNumber')
     .populate('warehouse', 'name code')
     .populate('items.item', 'name sku')
@@ -236,7 +254,7 @@ export async function getSupplierPayments(supplierId: string, query: Record<stri
   return { payments, pagination: buildPagination(page, limit, total) };
 }
 
-// ── Supplier Dues (T37) ───────────────────────────────────────────────────────
+// ── Supplier Dues ─────────────────────────────────────────────────────────────
 
 export async function getSupplierDues(supplierId: string) {
   const supplier = await Supplier.findById(supplierId);
@@ -245,17 +263,23 @@ export async function getSupplierDues(supplierId: string) {
   const [receipts, payments] = await Promise.all([
     GoodsReceipt.find({ supplier: supplierId, isActive: true })
       .populate('purchaseOrder', 'poNumber')
+      .populate('items.item', 'name sku')
       .sort({ createdAt: -1 })
-      .select('grNumber totalAmount receivedDate purchaseOrder'),
+      .select('grNumber totalAmount receivedDate purchaseOrder items'),
     SupplierPayment.find({ supplier: supplierId, isActive: true })
       .sort({ paymentDate: -1 })
       .select('paymentNumber amount paymentDate method reference'),
   ]);
 
+  const totalOrdered = receipts.reduce((sum, r) => sum + r.totalAmount, 0);
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
   return {
-    supplier: { _id: supplier._id, name: supplier.name, code: supplier.code },
+    supplier: { _id: supplier._id, name: supplier.name },
     outstandingBalance: supplier.balance,
+    totalOrdered,
+    totalPaid,
     receipts,
-    payments,
+    recentPayments: payments,
   };
 }

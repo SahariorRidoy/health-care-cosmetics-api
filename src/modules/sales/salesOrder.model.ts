@@ -51,7 +51,7 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
     status: {
       type: String,
       enum: ['DRAFT', 'CONFIRMED', 'DISPATCHED', 'CLOSED', 'CANCELLED'],
-      default: 'DRAFT',
+      default: 'CONFIRMED',
     },
     items: { type: [soItemSchema], required: true },
     subtotal: { type: Number, required: true, min: 0 },

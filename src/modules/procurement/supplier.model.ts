@@ -2,8 +2,6 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISupplierDocument extends Document {
   name: string;
-  code: string;
-  category: string;
   contactPerson?: string;
   phone?: string;
   email?: string;
@@ -17,8 +15,6 @@ export interface ISupplierDocument extends Document {
 const supplierSchema = new Schema<ISupplierDocument>(
   {
     name: { type: String, required: true, trim: true },
-    code: { type: String, required: true, trim: true, unique: true, uppercase: true },
-    category: { type: String, required: true, trim: true },
     contactPerson: { type: String, trim: true },
     phone: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
@@ -29,7 +25,7 @@ const supplierSchema = new Schema<ISupplierDocument>(
   { timestamps: true },
 );
 
-supplierSchema.index({ name: 'text', code: 'text', category: 'text' });
+supplierSchema.index({ name: 'text' });
 supplierSchema.index({ isActive: 1 });
 
 export const Supplier = mongoose.model<ISupplierDocument>('Supplier', supplierSchema);

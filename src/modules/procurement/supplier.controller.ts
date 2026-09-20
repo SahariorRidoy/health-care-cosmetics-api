@@ -30,8 +30,3 @@ export const deleteSupplier = asyncHandler(async (req: Request, res: Response) =
   await supplierService.deleteSupplier(req.params.id);
   sendResponse(res, 200, null, 'Supplier deactivated');
 });
-
-export const getSupplierCategories = asyncHandler(async (_req: Request, res: Response) => {
-  const categories = await supplierService.getSupplierCategories();
-  sendResponse(res, 200, { categories }, 'Categories fetched');
-});

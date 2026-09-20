@@ -45,8 +45,17 @@ export async function postMovement(input: PostMovementInput) {
     throw new AppError('Insufficient stock', 400);
   }
 
-  // Sync Item.currentStock (denormalized for quick reads)
-  await Item.findByIdAndUpdate(item, { currentStock: balance.quantity }, opts);
+  // Sync Item.currentStock as SUM of all warehouse balances for this item
+  const itemObjectId = typeof item === 'string' ? new Types.ObjectId(item) : item;
+  const allBalances = await StockBalance.aggregate(
+    [
+      { $match: { item: itemObjectId } },
+      { $group: { _id: '$item', total: { $sum: '$quantity' } } },
+    ],
+    session ? { session } : {},
+  );
+  const totalStock = allBalances[0]?.total ?? 0;
+  await Item.findByIdAndUpdate(item, { currentStock: totalStock }, opts);
 
   const movement = await StockMovement.create(
     [{

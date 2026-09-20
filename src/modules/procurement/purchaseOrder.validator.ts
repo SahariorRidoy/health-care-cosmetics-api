@@ -3,7 +3,7 @@ import { z } from 'zod';
 const poItemSchema = z.object({
   item: z.string().min(1, 'Item is required'),
   description: z.string().trim().optional(),
-  orderedQty: z.number().min(0.001, 'Quantity must be greater than 0'),
+  orderedQty: z.number().int('Quantity must be a whole number').min(1, 'Quantity must be at least 1'),
   unitPrice: z.number().min(0, 'Unit price must be 0 or more'),
   uom: z.string().min(1, 'UOM is required'),
 });

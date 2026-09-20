@@ -7,7 +7,6 @@ export async function getCustomers(query: Record<string, unknown>) {
 
   const filter: Record<string, unknown> = { isActive: true };
   if (query.search) filter.$text = { $search: String(query.search) };
-  if (query.category) filter.category = query.category;
 
   const [items, total] = await Promise.all([
     Customer.find(filter).sort({ name: 1 }).skip(skip).limit(limit),
@@ -24,20 +23,17 @@ export async function getCustomerById(id: string) {
 }
 
 export async function createCustomer(data: {
-  name: string; code: string; category: string;
-  contactPerson?: string; phone?: string; email?: string; address?: string; creditLimit?: number;
+  name: string;
+  phone?: string; email?: string; address?: string;
 }) {
-  const exists = await Customer.findOne({ code: data.code.toUpperCase() });
-  if (exists) throw new AppError('Customer with this code already exists', 409);
   return Customer.create(data);
 }
 
 export async function updateCustomer(id: string, data: Partial<{
-  name: string; code: string; category: string;
-  contactPerson: string; phone: string; email: string; address: string;
-  creditLimit: number; isActive: boolean;
+  name: string;
+  phone: string; email: string; address: string;
+  isActive: boolean;
 }>) {
-  if (data.code) data.code = data.code.toUpperCase();
   const customer = await Customer.findByIdAndUpdate(id, data, { new: true, runValidators: true });
   if (!customer) throw new AppError('Customer not found', 404);
   return customer;
@@ -47,8 +43,4 @@ export async function deleteCustomer(id: string) {
   const customer = await Customer.findByIdAndUpdate(id, { isActive: false }, { new: true });
   if (!customer) throw new AppError('Customer not found', 404);
   return customer;
-}
-
-export async function getCustomerCategories() {
-  return Customer.distinct('category', { isActive: true });
 }

@@ -9,7 +9,7 @@ import {
 
 export async function generateInvoicePDF(invoiceId: string, res: Response) {
   const invoice = await Invoice.findById(invoiceId)
-    .populate('customer', 'name code contactPerson phone email address')
+    .populate('customer', 'name phone email address')
     .populate('salesOrder', 'orderNumber')
     .populate('items.item', 'name sku')
     .populate('items.uom', 'symbol')
@@ -29,7 +29,6 @@ export async function generateInvoicePDF(invoiceId: string, res: Response) {
   drawKeyValueGrid(doc, [
     { label: 'Customer', value: customer?.name ?? '—' },
     { label: 'Invoice Number', value: invoice.invoiceNumber },
-    { label: 'Customer Code', value: customer?.code ?? '—' },
     { label: 'Invoice Date', value: formatDate(invoice.createdAt) },
     { label: 'Contact', value: customer?.phone ?? customer?.email ?? '—' },
     { label: 'Due Date', value: formatDate(invoice.dueDate) },

@@ -2,8 +2,10 @@ import mongoose from 'mongoose';
 import { BOM } from './bom.model';
 import { ProductionOrder, ProductionStatus } from './productionOrder.model';
 import { StockBalance } from '../inventory/stock.model';
+import { Item } from '../inventory/item.model';
 import { Warehouse } from '../warehouse/warehouse.model';
 import { postMovement } from '../inventory/stock.service';
+import { convertQty } from '../inventory/uom.service';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
 
@@ -336,8 +338,53 @@ export async function recordOutput(id: string, data: {
       }
     }
 
+    // ── Cost Calculation ────────────────────────────────────────────────────────────
+    // Use actualConsumed if provided, otherwise fall back to issuedQty on materials
+    const consumedLines = data.actualConsumed ?? wo.materials.map((m) => ({
+      item: String(m.item),
+      qty: m.issuedQty,
+    }));
+
+    let totalMaterialCost = 0;
+    for (const line of consumedLines) {
+      if (!line.qty || line.qty <= 0) continue;
+      const itemDoc = await Item.findById(line.item).select('costPrice baseUom');
+      if (!itemDoc || !itemDoc.costPrice) continue;
+
+      // Find the material line's UOM from the production order
+      const matLine = wo.materials.find((m) => String(m.item) === String(line.item));
+      const matUomId = matLine ? String(matLine.uom) : String(itemDoc.baseUom);
+
+      // Convert consumed qty to item's baseUOM
+      let baseQty = line.qty;
+      try {
+        baseQty = await convertQty(line.qty, matUomId, String(itemDoc.baseUom));
+      } catch {
+        // No conversion — assume same unit
+        baseQty = line.qty;
+      }
+
+      totalMaterialCost += baseQty * itemDoc.costPrice;
+    }
+
+    totalMaterialCost = Math.round(totalMaterialCost * 100) / 100;
+    const costPerUnit = data.actualOutputQty > 0
+      ? Math.round((totalMaterialCost / data.actualOutputQty) * 100) / 100
+      : 0;
+
+    // Update finished product costPrice
+    if (costPerUnit > 0) {
+      await Item.findByIdAndUpdate(
+        wo.product,
+        { costPrice: costPerUnit },
+        { session },
+      );
+    }
+
     wo.actualOutputQty = data.actualOutputQty;
     wo.wastageQty = data.wastageQty;
+    wo.totalMaterialCost = totalMaterialCost;
+    wo.costPerUnit = costPerUnit;
     wo.status = 'COMPLETED';
     wo.completedDate = new Date();
     await wo.save({ session });

@@ -4,6 +4,7 @@ import { Invoice } from './invoice.model';
 import { CustomerPayment } from './customerPayment.model';
 import { Customer } from './customer.model';
 import { Warehouse } from '../warehouse/warehouse.model';
+import { Item } from '../inventory/item.model';
 import { postMovement } from '../inventory/stock.service';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
@@ -65,7 +66,7 @@ export async function getSalesOrders(query: Record<string, unknown>) {
 
   const [items, total] = await Promise.all([
     SalesOrder.find(filter)
-      .populate('customer', 'name code')
+      .populate('customer', 'name')
       .populate('warehouse', 'name code')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -77,7 +78,7 @@ export async function getSalesOrders(query: Record<string, unknown>) {
 
 export async function getSalesOrderById(id: string) {
   const order = await SalesOrder.findById(id)
-    .populate('customer', 'name code contactPerson phone email')
+    .populate('customer', 'name phone email')
     .populate('warehouse', 'name code')
     .populate('items.item', 'name sku type')
     .populate('items.uom', 'name symbol')
@@ -93,7 +94,8 @@ export async function createSalesOrder(
     items: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
     taxPercent: number;
     notes?: string;
-    deliveryDate?: string;
+    status?: string;
+    payment?: { amount: number; method: string; reference?: string; notes?: string };
   },
   createdBy: string,
 ) {
@@ -104,24 +106,113 @@ export async function createSalesOrder(
   if (!customer || !customer.isActive) throw new AppError('Customer not found', 404);
   if (!warehouse || !warehouse.isActive) throw new AppError('Warehouse not found', 404);
 
-  const orderNumber = await generateOrderNumber();
-  const items = buildItems(data.items);
-  const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
+  const itemIds = data.items.map((i) => i.item);
+  const items = await Item.find({ _id: { $in: itemIds } }).select('type name');
+  const invalidItems = items.filter((i) => i.type !== 'FINISHED_GOOD');
+  if (invalidItems.length > 0) {
+    const names = invalidItems.map((i) => i.name).join(', ');
+    throw new AppError(`Sales orders can only contain finished products. Invalid items: ${names}`, 400);
+  }
 
-  return SalesOrder.create({
-    orderNumber,
-    customer: data.customer,
-    warehouse: data.warehouse,
-    items,
-    subtotal,
-    discountAmount,
-    taxPercent: data.taxPercent,
-    taxAmount,
-    totalAmount,
-    notes: data.notes,
-    deliveryDate: data.deliveryDate,
-    createdBy,
-  });
+  const orderNumber = await generateOrderNumber();
+  const soItems = buildItems(data.items);
+  const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
+  const finalStatus = (data.status ?? 'CONFIRMED') as SalesOrderStatus;
+  const needsDispatch = finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
+  const needsInvoice = finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const [order] = await SalesOrder.create([{
+      orderNumber,
+      customer: data.customer,
+      warehouse: data.warehouse,
+      items: soItems,
+      subtotal,
+      discountAmount,
+      taxPercent: data.taxPercent,
+      taxAmount,
+      totalAmount,
+      notes: data.notes,
+      status: finalStatus,
+      deliveryDate: new Date(),
+      createdBy,
+    }], { session });
+
+    // Stock dispatch for DISPATCHED/CLOSED
+    if (needsDispatch) {
+      for (const item of soItems) {
+        await postMovement({
+          type: 'SALES_DISPATCH',
+          item: item.item,
+          warehouse: data.warehouse,
+          quantity: -item.qty,
+          reference: orderNumber,
+          referenceModel: 'SalesOrder',
+          referenceId: order._id as unknown as string,
+          notes: `Dispatch for order ${orderNumber}`,
+          createdBy,
+          session,
+        });
+      }
+    }
+
+    // Auto-create invoice for DISPATCHED/CLOSED
+    let invoice = null;
+    if (needsInvoice) {
+      const invoiceNumber = await generateInvoiceNumber();
+      const [inv] = await Invoice.create([{
+        invoiceNumber,
+        customer: data.customer,
+        salesOrder: order._id,
+        items: soItems,
+        subtotal,
+        discountAmount,
+        taxPercent: data.taxPercent,
+        taxAmount,
+        totalAmount,
+        paidAmount: 0,
+        dueAmount: totalAmount,
+        createdBy,
+      }], { session });
+      invoice = inv;
+      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: totalAmount } }, { session });
+    }
+
+    // Auto-record payment if provided
+    if (data.payment && invoice) {
+      const payAmt = Math.min(data.payment.amount, totalAmount);
+      const receiptNumber = await generateReceiptNumber();
+      const newPaid = round2(payAmt);
+      const newDue = round2(totalAmount - newPaid);
+      await CustomerPayment.create([{
+        receiptNumber,
+        customer: data.customer,
+        invoice: invoice._id,
+        amount: payAmt,
+        paymentDate: new Date(),
+        method: data.payment.method,
+        reference: data.payment.reference,
+        notes: data.payment.notes,
+        createdBy,
+      }], { session });
+      await Invoice.findByIdAndUpdate(
+        invoice._id,
+        { paidAmount: newPaid, dueAmount: newDue, status: newDue <= 0 ? 'PAID' : 'PARTIAL' },
+        { session },
+      );
+      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: -payAmt } }, { session });
+    }
+
+    await session.commitTransaction();
+    return order;
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }
 
 export async function updateSalesOrder(
@@ -130,7 +221,6 @@ export async function updateSalesOrder(
     items?: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
     taxPercent?: number;
     notes?: string;
-    deliveryDate?: string;
   },
 ) {
   const order = await SalesOrder.findById(id);
@@ -139,7 +229,6 @@ export async function updateSalesOrder(
 
   const update: Record<string, unknown> = {};
   if (data.notes !== undefined) update.notes = data.notes;
-  if (data.deliveryDate !== undefined) update.deliveryDate = data.deliveryDate;
 
   if (data.items) {
     const taxPercent = data.taxPercent ?? order.taxPercent;
@@ -158,7 +247,7 @@ export async function updateSalesOrder(
 }
 
 const SO_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[]> = {
-  DRAFT: ['CONFIRMED', 'CANCELLED'],
+  DRAFT: ['CONFIRMED', 'DISPATCHED', 'CANCELLED'],
   CONFIRMED: ['DISPATCHED', 'CANCELLED'],
   DISPATCHED: ['CLOSED'],
   CLOSED: [],
@@ -225,7 +314,7 @@ export async function getInvoices(query: Record<string, unknown>) {
 
   const [items, total] = await Promise.all([
     Invoice.find(filter)
-      .populate('customer', 'name code')
+      .populate('customer', 'name')
       .populate('salesOrder', 'orderNumber')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -237,7 +326,7 @@ export async function getInvoices(query: Record<string, unknown>) {
 
 export async function getInvoiceById(id: string) {
   const invoice = await Invoice.findById(id)
-    .populate('customer', 'name code contactPerson phone email')
+    .populate('customer', 'name phone email')
     .populate('salesOrder', 'orderNumber')
     .populate('items.item', 'name sku')
     .populate('items.uom', 'name symbol')
@@ -422,7 +511,7 @@ export async function getCustomerDues(customerId: string) {
   }
 
   return {
-    customer: { _id: customer._id, name: customer.name, code: customer.code, creditLimit: customer.creditLimit },
+    customer: { _id: customer._id, name: customer.name },
     outstandingBalance: customer.balance,
     aging,
     invoices,

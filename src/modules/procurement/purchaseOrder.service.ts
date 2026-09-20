@@ -1,5 +1,6 @@
 import { PurchaseOrder, POStatus } from './purchaseOrder.model';
 import { Supplier } from './supplier.model';
+import { Item } from '../inventory/item.model';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
 
@@ -25,7 +26,7 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
 
   const [items, total] = await Promise.all([
     PurchaseOrder.find(filter)
-      .populate('supplier', 'name code')
+      .populate('supplier', 'name')
       .populate('items.item', 'name sku')
       .populate('items.uom', 'name symbol')
       .sort({ createdAt: -1 })
@@ -39,7 +40,7 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
 
 export async function getPurchaseOrderById(id: string) {
   const po = await PurchaseOrder.findById(id)
-    .populate('supplier', 'name code contactPerson phone email')
+    .populate('supplier', 'name contactPerson phone email')
     .populate('items.item', 'name sku type')
     .populate('items.uom', 'name symbol')
     .populate('createdBy', 'name');
@@ -56,10 +57,22 @@ export async function createPurchaseOrder(data: {
   const supplier = await Supplier.findById(data.supplier);
   if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
 
+  // Enforce: POs can only contain raw materials or packaging items
+  const itemIds = data.items.map((i) => i.item);
+  const items = await Item.find({ _id: { $in: itemIds } }).select('type name');
+  const invalidItems = items.filter((i) => i.type !== 'RAW_MATERIAL' && i.type !== 'PACKAGING');
+  if (invalidItems.length > 0) {
+    const names = invalidItems.map((i) => i.name).join(', ');
+    throw new AppError(
+      `Purchase orders can only contain raw materials or packaging items. Invalid items: ${names}`,
+      400,
+    );
+  }
+
   const poNumber = await generatePONumber();
   const { subtotal, totalAmount } = calcTotals(data.items);
 
-  const items = data.items.map((i) => ({
+  const poItems = data.items.map((i) => ({
     ...i,
     receivedQty: 0,
     totalPrice: Math.round(i.orderedQty * i.unitPrice * 100) / 100,
@@ -68,7 +81,7 @@ export async function createPurchaseOrder(data: {
   return PurchaseOrder.create({
     poNumber,
     supplier: data.supplier,
-    items,
+    items: poItems,
     subtotal,
     totalAmount,
     notes: data.notes,

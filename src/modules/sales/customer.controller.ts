@@ -30,8 +30,3 @@ export const deleteCustomer = asyncHandler(async (req: Request, res: Response) =
   await customerService.deleteCustomer(req.params.id);
   sendResponse(res, 200, null, 'Customer deactivated');
 });
-
-export const getCustomerCategories = asyncHandler(async (_req: Request, res: Response) => {
-  const categories = await customerService.getCustomerCategories();
-  sendResponse(res, 200, { categories }, 'Categories fetched');
-});

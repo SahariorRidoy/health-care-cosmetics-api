@@ -78,14 +78,14 @@ export const updateLeaveStatusSchema = z.object({
 
 export const generatePayrollSchema = z.object({
   employee: z.string().min(1, 'Employee is required'),
-  month: z.number().int().min(1).max(12),
-  year: z.number().int().min(2020),
+  month: z.coerce.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2020),
   notes: z.string().trim().optional(),
 });
 
 export const bulkGeneratePayrollSchema = z.object({
-  month: z.number().int().min(1).max(12),
-  year: z.number().int().min(2020),
+  month: z.coerce.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2020),
 });
 
 export const updatePayrollStatusSchema = z.object({
