@@ -1,14 +1,18 @@
 import mongoose from 'mongoose';
 import { config } from '../config';
 
+let isConnected = false;
+
 export async function connectDatabase(): Promise<void> {
+  if (isConnected) return;
   try {
     await mongoose.connect(config.mongoUri);
+    isConnected = true;
     console.info(`MongoDB connected: ${mongoose.connection.host}`);
     await runSeedIfNeeded();
   } catch (error) {
     console.error('MongoDB connection error:', error);
-    process.exit(1);
+    throw error;
   }
 }
 

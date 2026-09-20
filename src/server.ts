@@ -55,9 +55,46 @@ if (config.env !== 'test') {
   app.use(morgan(config.env === 'development' ? 'dev' : 'combined'));
 }
 
+// ── DB connect middleware (serverless-safe) ──────────────
+app.use(async (_req, _res, next) => {
+  try {
+    await connectDatabase();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Root ─────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'HCC ERP API',
+    description: 'Health Care Cosmetics - Enterprise Resource Planning API',
+    version: '1.0.0',
+    status: 'running',
+    env: config.env,
+    uptime: `${Math.floor(process.uptime())}s`,
+    timestamp: new Date().toISOString(),
+    health: '/health',
+    baseUrl: `/api/v1`,
+    modules: [
+      'auth', 'users', 'inventory', 'warehouse',
+      'procurement', 'production', 'sales',
+      'finance', 'hr', 'reports',
+    ],
+  });
+});
+
 // ── Health check ──────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    name: 'HCC ERP API',
+    version: '1.0.0',
+    env: config.env,
+    timestamp: new Date().toISOString(),
+    uptime: `${Math.floor(process.uptime())}s`,
+  });
 });
 
 // ── API Routes ────────────────────────────────────────────
@@ -87,19 +124,20 @@ app.use((_req, res) => {
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────
-async function startServer() {
-  await connectDatabase();
-  app.listen(config.port, () => {
-    console.info(`✓ API running on http://localhost:${config.port} [${config.env}]`);
-  });
+if (config.env !== 'production') {
+  connectDatabase()
+    .then(() => {
+      app.listen(config.port, () => {
+        console.info(`✓ API running on http://localhost:${config.port} [${config.env}]`);
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to connect to database:', err);
+      process.exit(1);
+    });
+
+  process.on('SIGTERM', () => { process.exit(0); });
+  process.on('SIGINT', () => { process.exit(0); });
 }
-
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
-
-process.on('SIGTERM', () => { process.exit(0); });
-process.on('SIGINT', () => { process.exit(0); });
 
 export default app;
