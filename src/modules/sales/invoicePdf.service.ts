@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { Invoice } from './invoice.model';
+import { CustomerPayment } from './customerPayment.model';
 import { AppError } from '../../common/utils/errors';
 import {
   createPDFResponse, drawHeader, drawSectionTitle, drawKeyValueGrid,
@@ -16,6 +17,10 @@ export async function generateInvoicePDF(invoiceId: string, res: Response) {
     .populate('createdBy', 'name');
 
   if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
+
+  const payment = await CustomerPayment.findOne({ invoice: invoiceId, isActive: true }).sort({ createdAt: -1 });
+  const receivedAmount = payment ? payment.amount + (payment.changeAmount ?? 0) : invoice.paidAmount;
+  const changeAmount = payment?.changeAmount ?? 0;
 
   const customer = invoice.customer as unknown as Record<string, string>;
   const salesOrder = invoice.salesOrder as unknown as Record<string, string> | null;
@@ -72,8 +77,10 @@ export async function generateInvoicePDF(invoiceId: string, res: Response) {
     { label: 'Discount', value: `- ${formatBDT(invoice.discountAmount)}` },
     { label: `Tax (${invoice.taxPercent}%)`, value: formatBDT(invoice.taxAmount) },
     { label: 'Total Amount', value: formatBDT(invoice.totalAmount), bold: true },
-    { label: 'Paid Amount', value: formatBDT(invoice.paidAmount) },
-    { label: 'Amount Due', value: formatBDT(invoice.dueAmount), highlight: true },
+    { label: 'Amount Received', value: formatBDT(receivedAmount) },
+    { label: 'Applied Amount', value: formatBDT(invoice.paidAmount) },
+    ...(changeAmount > 0 ? [{ label: 'Change Given', value: formatBDT(changeAmount), highlight: true }] : []),
+    { label: 'Amount Due', value: formatBDT(invoice.dueAmount), highlight: invoice.dueAmount > 0 },
   ]);
 
   // ── Notes ─────────────────────────────────────────────────────────────────

@@ -119,7 +119,7 @@ export async function createSalesOrder(
   const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
   const finalStatus = (data.status ?? 'CONFIRMED') as SalesOrderStatus;
   const needsDispatch = finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
-  const needsInvoice = finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
+  const needsInvoice = finalStatus === 'CONFIRMED' || finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -182,15 +182,18 @@ export async function createSalesOrder(
 
     // Auto-record payment if provided
     if (data.payment && invoice) {
-      const payAmt = Math.min(data.payment.amount, totalAmount);
+      const payAmt = data.payment.amount;
+      const changeAmount = round2(Math.max(0, payAmt - totalAmount));
+      const appliedAmt = round2(Math.min(payAmt, totalAmount));
+      const newDue = round2(totalAmount - appliedAmt);
+      const invoiceStatus = newDue <= 0 ? 'PAID' : 'PARTIAL';
       const receiptNumber = await generateReceiptNumber();
-      const newPaid = round2(payAmt);
-      const newDue = round2(totalAmount - newPaid);
       await CustomerPayment.create([{
         receiptNumber,
         customer: data.customer,
         invoice: invoice._id,
-        amount: payAmt,
+        amount: appliedAmt,
+        changeAmount,
         paymentDate: new Date(),
         method: data.payment.method,
         reference: data.payment.reference,
@@ -199,10 +202,10 @@ export async function createSalesOrder(
       }], { session });
       await Invoice.findByIdAndUpdate(
         invoice._id,
-        { paidAmount: newPaid, dueAmount: newDue, status: newDue <= 0 ? 'PAID' : 'PARTIAL' },
+        { paidAmount: appliedAmt, dueAmount: newDue, status: invoiceStatus },
         { session },
       );
-      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: -payAmt } }, { session });
+      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: -appliedAmt } }, { session });
     }
 
     await session.commitTransaction();
@@ -311,6 +314,7 @@ export async function getInvoices(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.customer) filter.customer = query.customer;
   if (query.status) filter.status = query.status;
+  if (query.salesOrder) filter.salesOrder = query.salesOrder;
 
   const [items, total] = await Promise.all([
     Invoice.find(filter)
@@ -416,14 +420,12 @@ export async function createCustomerPayment(
   if (invoice.status === 'PAID') throw new AppError('Invoice is already fully paid', 400);
   if (invoice.status === 'CANCELLED') throw new AppError('Invoice is cancelled', 400);
   if (String(invoice.customer) !== data.customer) throw new AppError('Invoice does not belong to this customer', 400);
-  if (data.amount > invoice.dueAmount) {
-    throw new AppError(`Payment (${data.amount}) exceeds invoice due amount (${invoice.dueAmount})`, 400);
-  }
 
+  const changeAmount = round2(Math.max(0, data.amount - invoice.dueAmount));
+  const appliedAmt = round2(Math.min(data.amount, invoice.dueAmount));
   const receiptNumber = await generateReceiptNumber();
-  const newPaid = round2(invoice.paidAmount + data.amount);
-  const newDue = round2(invoice.totalAmount - newPaid);
-  const newStatus = newDue <= 0 ? 'PAID' : 'PARTIAL';
+  const newPaid = round2(invoice.paidAmount + appliedAmt);
+  const newDue = 0;
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -433,7 +435,8 @@ export async function createCustomerPayment(
         receiptNumber,
         customer: data.customer,
         invoice: data.invoice,
-        amount: data.amount,
+        amount: appliedAmt,
+        changeAmount,
         paymentDate: data.paymentDate ?? new Date(),
         method: data.method,
         reference: data.reference,
@@ -445,14 +448,14 @@ export async function createCustomerPayment(
 
     await Invoice.findByIdAndUpdate(
       data.invoice,
-      { paidAmount: newPaid, dueAmount: newDue, status: newStatus },
+      { paidAmount: newPaid, dueAmount: newDue, status: 'PAID' },
       { session },
     );
 
     // Decrease customer balance (they paid us)
     await Customer.findByIdAndUpdate(
       data.customer,
-      { $inc: { balance: -data.amount } },
+      { $inc: { balance: -appliedAmt } },
       { session },
     );
 

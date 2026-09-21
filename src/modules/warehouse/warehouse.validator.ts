@@ -7,4 +7,6 @@ export const createWarehouseSchema = z.object({
   isDefault: z.boolean().optional(),
 });
 
-export const updateWarehouseSchema = createWarehouseSchema.partial();
+export const updateWarehouseSchema = createWarehouseSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});

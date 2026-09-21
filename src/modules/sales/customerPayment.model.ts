@@ -8,6 +8,7 @@ export interface ICustomerPaymentDocument extends Document {
   paymentDate: Date;
   method: string;
   reference?: string;
+  changeAmount?: number;
   notes?: string;
   isActive: boolean;
   createdBy: Types.ObjectId;
@@ -21,6 +22,7 @@ const customerPaymentSchema = new Schema<ICustomerPaymentDocument>(
     customer: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
     invoice: { type: Schema.Types.ObjectId, ref: 'Invoice', required: true },
     amount: { type: Number, required: true, min: 0.01 },
+    changeAmount: { type: Number, default: 0, min: 0 },
     paymentDate: { type: Date, default: Date.now },
     method: { type: String, required: true, trim: true },
     reference: { type: String, trim: true },

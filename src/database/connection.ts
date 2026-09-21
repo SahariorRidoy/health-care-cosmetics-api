@@ -23,6 +23,10 @@ async function dropStaleIndexes(): Promise<void> {
   const stale: Array<{ collection: string; index: string }> = [
     { collection: 'suppliers', index: 'code_1' },
     { collection: 'suppliers', index: 'email_1' },
+    { collection: 'customers', index: 'name_1' },
+    { collection: 'customers', index: 'phone_1' },
+    { collection: 'customers', index: 'email_1' },
+    { collection: 'customers', index: 'code_1' },
   ];
   for (const { collection, index } of stale) {
     try {

@@ -25,7 +25,11 @@ function formatDate(date: Date | string | undefined): string {
 // ── PDF Builder ───────────────────────────────────────────────────────────────
 
 export function createPDFResponse(res: Response, filename: string): PDFKit.PDFDocument {
-  const doc = new PDFDocument({ size: 'A4', margin: PAGE_MARGIN, bufferPages: true });
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: PAGE_MARGIN, bottom: 50, left: PAGE_MARGIN, right: PAGE_MARGIN },
+    bufferPages: true,
+  });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   doc.pipe(res);
@@ -189,18 +193,19 @@ export function drawTotalsBlock(
 }
 
 export function drawFooter(doc: PDFKit.PDFDocument) {
-  const pageCount = (doc.bufferedPageRange().count);
-  for (let i = 0; i < pageCount; i++) {
-    doc.switchToPage(i);
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i++) {
+    doc.switchToPage(range.start + i);
+    const footerY = doc.page.height - 30;
     doc
       .fillColor(MUTED)
       .fontSize(7.5)
       .font('Helvetica')
       .text(
-        `Health Care Cosmetics Ltd. · Generated ${formatDate(new Date())} · Page ${i + 1} of ${pageCount}`,
+        `Health Care Cosmetics Ltd. · Generated ${formatDate(new Date())} · Page ${i + 1} of ${range.count}`,
         PAGE_MARGIN,
-        doc.page.height - 30,
-        { width: CONTENT_WIDTH, align: 'center' },
+        footerY,
+        { width: CONTENT_WIDTH, align: 'center', lineBreak: false },
       );
   }
 }

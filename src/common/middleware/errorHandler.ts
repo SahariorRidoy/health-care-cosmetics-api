@@ -31,9 +31,13 @@ export function errorHandler(
 
   // Mongoose duplicate key
   if ((err as NodeJS.ErrnoException).name === 'MongoServerError' && (err as NodeJS.ErrnoException & { code?: number }).code === 11000) {
+    const keyValue = (err as NodeJS.ErrnoException & { keyValue?: Record<string, unknown> }).keyValue ?? {};
+    const field = Object.keys(keyValue)[0] ?? 'field';
+    const value = keyValue[field];
+    console.error('[Duplicate Key]', { field, value, err: err.message });
     return res.status(409).json({
       success: false,
-      message: 'A record with this value already exists',
+      message: `A record with this ${field} already exists`,
     });
   }
 

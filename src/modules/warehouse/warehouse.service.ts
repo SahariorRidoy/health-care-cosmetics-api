@@ -2,7 +2,7 @@ import { Warehouse } from './warehouse.model';
 import { AppError } from '../../common/utils/errors';
 
 export async function getWarehouses() {
-  return Warehouse.find({ isActive: true }).sort({ isDefault: -1, name: 1 });
+  return Warehouse.find().sort({ isDefault: -1, name: 1 });
 }
 
 export async function getDefaultWarehouse() {
