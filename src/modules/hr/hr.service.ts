@@ -101,6 +101,20 @@ export async function updateEmployee(
   return emp;
 }
 
+export async function updateEmployeeDocuments(
+  id: string,
+  cvFilename?: string,
+  nidFilename?: string,
+) {
+  const update: Record<string, string> = {};
+  if (cvFilename) update.cvPath = cvFilename;
+  if (nidFilename) update.nidPath = nidFilename;
+  const emp = await Employee.findByIdAndUpdate(id, update, { new: true })
+    .populate('department', 'name');
+  if (!emp || !emp.isActive) throw new AppError('Employee not found', 404);
+  return emp;
+}
+
 export async function deleteEmployee(id: string) {
   const emp = await Employee.findByIdAndUpdate(id, { isActive: false }, { new: true });
   if (!emp) throw new AppError('Employee not found', 404);

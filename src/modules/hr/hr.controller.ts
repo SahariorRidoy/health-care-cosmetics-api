@@ -41,6 +41,14 @@ export const deleteEmployee = asyncHandler(async (req: Request, res: Response) =
   sendResponse(res, 200, null, 'Employee deactivated');
 });
 
+export const uploadEmployeeDocuments = asyncHandler(async (req: Request, res: Response) => {
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  const cvFile = files?.['cv']?.[0];
+  const nidFile = files?.['nid']?.[0];
+  const emp = await hrService.updateEmployeeDocuments(req.params.id, cvFile?.filename, nidFile?.filename);
+  sendResponse(res, 200, { employee: emp }, 'Documents uploaded');
+});
+
 // ── Salary Structure ──────────────────────────────────────────────────────────
 
 export const getSalaryStructures = asyncHandler(async (req: Request, res: Response) => {

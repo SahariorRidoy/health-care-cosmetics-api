@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getEmployees, getEmployee, createEmployee, updateEmployee, deleteEmployee,
+  uploadEmployeeDocuments,
   getSalaryStructures, createSalaryStructure, updateSalaryStructure,
   getAttendance, upsertAttendance, bulkUpsertAttendance, updateAttendance,
   getLeaves, getLeave, createLeave, updateLeaveStatus,
@@ -10,6 +11,7 @@ import {
 import { protect } from '../../common/middleware/protect';
 import { requirePermission } from '../../common/middleware/requirePermission';
 import { PERMISSIONS } from '../permissions/permissions.constants';
+import { uploadEmployeeDocs } from './upload.middleware';
 
 const router = Router();
 router.use(protect);
@@ -20,6 +22,7 @@ router.get('/employees/:id', requirePermission(PERMISSIONS.HR_VIEW), getEmployee
 router.post('/employees', requirePermission(PERMISSIONS.HR_CREATE), createEmployee);
 router.patch('/employees/:id', requirePermission(PERMISSIONS.HR_UPDATE), updateEmployee);
 router.delete('/employees/:id', requirePermission(PERMISSIONS.HR_CREATE), deleteEmployee);
+router.post('/employees/:id/documents', requirePermission(PERMISSIONS.HR_UPDATE), uploadEmployeeDocs, uploadEmployeeDocuments);
 
 // ── Salary Structures ─────────────────────────────────────────────────────────
 router.get('/employees/:employeeId/salary-structures', requirePermission(PERMISSIONS.HR_VIEW), getSalaryStructures);

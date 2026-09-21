@@ -5,6 +5,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 import { config } from './config';
 import { connectDatabase } from './database/connection';
 import { errorHandler } from './common/middleware/errorHandler';
@@ -54,6 +55,9 @@ app.use(compression());
 if (config.env !== 'test') {
   app.use(morgan(config.env === 'development' ? 'dev' : 'combined'));
 }
+
+// ── Static uploads ────────────────────────────────────────
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // ── DB connect middleware (serverless-safe) ──────────────
 app.use(async (_req, _res, next) => {

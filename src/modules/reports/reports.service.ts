@@ -1,6 +1,7 @@
 import { StockMovement, StockBalance } from '../inventory/stock.model';
 import { Item } from '../inventory/item.model';
 import { ProductionOrder } from '../production/productionOrder.model';
+import { BOM } from '../production/bom.model';
 import { SalesOrder } from '../sales/salesOrder.model';
 import { Invoice } from '../sales/invoice.model';
 import { PurchaseOrder } from '../procurement/purchaseOrder.model';
@@ -141,7 +142,6 @@ export async function getProductionReport(query: {
   const [items, total] = await Promise.all([
     ProductionOrder.find(filter)
       .populate('product', 'name sku')
-      .populate('bom', 'version')
       .populate('warehouse', 'name')
       .sort({ createdAt: -1 })
       .skip(skip)

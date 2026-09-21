@@ -13,6 +13,8 @@ export interface IEmployeeDocument extends Document {
   joiningDate: Date;
   status: EmployeeStatus;
   currentSalary: number;
+  cvPath?: string;
+  nidPath?: string;
   isActive: boolean;
   createdBy: Types.ObjectId;
   createdAt: Date;
@@ -31,6 +33,8 @@ const employeeSchema = new Schema<IEmployeeDocument>(
     joiningDate: { type: Date, required: true },
     status: { type: String, enum: ['ACTIVE', 'INACTIVE', 'TERMINATED'], default: 'ACTIVE' },
     currentSalary: { type: Number, default: 0, min: 0 },
+    cvPath: { type: String },
+    nidPath: { type: String },
     isActive: { type: Boolean, default: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   },
