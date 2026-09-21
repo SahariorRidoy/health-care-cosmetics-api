@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../common/utils/asyncHandler';
 import { sendResponse } from '../../common/utils/response';
 import * as poService from './purchaseOrder.service';
-import { createPOSchema, updatePOSchema, updatePOStatusSchema } from './purchaseOrder.validator';
+import { createPOSchema, updatePOSchema, updatePOStatusSchema, updatePaymentSchema } from './purchaseOrder.validator';
 import { AuthRequest } from '../../common/middleware/protect';
 import { POStatus } from './purchaseOrder.model';
 
@@ -32,6 +32,12 @@ export const updatePOStatus = asyncHandler(async (req: Request, res: Response) =
   const { status } = updatePOStatusSchema.parse(req.body);
   const po = await poService.updatePOStatus(req.params.id, status as POStatus);
   sendResponse(res, 200, { purchaseOrder: po }, `Purchase order ${status.toLowerCase()}`);
+});
+
+export const updatePOPayment = asyncHandler(async (req: Request, res: Response) => {
+  const { paidAmount } = updatePaymentSchema.parse(req.body);
+  const po = await poService.updatePOPayment(req.params.id, paidAmount);
+  sendResponse(res, 200, { purchaseOrder: po }, 'Payment updated');
 });
 
 export const deletePurchaseOrder = asyncHandler(async (req: Request, res: Response) => {

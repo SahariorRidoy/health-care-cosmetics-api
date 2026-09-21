@@ -16,6 +16,13 @@ export const createItemSchema = z.object({
   salePrice: z.number().min(0).optional(),
   notes: z.string().trim().optional(),
   expectedDeliveryDate: z.string().datetime().optional(),
+  paidAmount: z.number().min(0).optional(),
+  materials: z.array(z.object({
+    item: z.string().min(1),
+    qty: z.number().min(0.000001),
+    uom: z.string().min(1),
+    warehouse: z.string().min(1),
+  })).optional(),
 });
 
 export const updateItemSchema = z.object({
@@ -28,4 +35,12 @@ export const updateItemSchema = z.object({
   costPrice: z.number().min(0).optional(),
   salePrice: z.number().min(0).optional(),
   isActive: z.boolean().optional(),
+  quantity: z.number().min(0.000001).optional(),
+  warehouse: z.string().min(1).optional(),
+  materials: z.array(z.object({
+    item: z.string().min(1),
+    qty: z.number().min(0.000001),
+    uom: z.string().min(1),
+    warehouse: z.string().min(1),
+  })).optional(),
 });

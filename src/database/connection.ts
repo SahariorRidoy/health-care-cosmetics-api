@@ -9,10 +9,28 @@ export async function connectDatabase(): Promise<void> {
     await mongoose.connect(config.mongoUri);
     isConnected = true;
     console.info(`MongoDB connected: ${mongoose.connection.host}`);
+    await dropStaleIndexes();
     await runSeedIfNeeded();
   } catch (error) {
     console.error('MongoDB connection error:', error);
     throw error;
+  }
+}
+
+async function dropStaleIndexes(): Promise<void> {
+  const db = mongoose.connection.db;
+  if (!db) return;
+  const stale: Array<{ collection: string; index: string }> = [
+    { collection: 'suppliers', index: 'code_1' },
+    { collection: 'suppliers', index: 'email_1' },
+  ];
+  for (const { collection, index } of stale) {
+    try {
+      await db.collection(collection).dropIndex(index);
+      console.info(`✓ Dropped stale index ${index} from ${collection}`);
+    } catch {
+      // index doesn't exist — safe to ignore
+    }
   }
 }
 

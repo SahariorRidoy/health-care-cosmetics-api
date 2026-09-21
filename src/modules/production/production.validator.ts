@@ -1,25 +1,5 @@
 import { z } from 'zod';
 
-// ── BOM ───────────────────────────────────────────────────────────────────────
-
-const bomInputSchema = z.object({
-  item: z.string().min(1, 'Item is required'),
-  qty: z.number().min(0.001, 'Quantity must be greater than 0'),
-  uom: z.string().min(1, 'UOM is required'),
-});
-
-export const createBOMSchema = z.object({
-  product: z.string().min(1, 'Product is required'),
-  version: z.string().trim().default('v1'),
-  inputMaterials: z.array(bomInputSchema).min(1, 'At least one input material is required'),
-  expectedOutputQty: z.number().min(0.001, 'Expected output must be greater than 0'),
-  outputUom: z.string().min(1, 'Output UOM is required'),
-  wastagePercent: z.number().min(0).max(100).default(0),
-  notes: z.string().trim().optional(),
-});
-
-export const updateBOMSchema = createBOMSchema.partial();
-
 // ── Production Order ──────────────────────────────────────────────────────────
 
 export const createProductionOrderSchema = z.object({

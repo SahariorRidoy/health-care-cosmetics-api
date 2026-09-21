@@ -1,4 +1,5 @@
 import { Supplier } from './supplier.model';
+import { PurchaseOrder } from './purchaseOrder.model';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
 
@@ -19,6 +20,17 @@ export async function getSuppliers(query: Record<string, unknown>) {
 export async function getSupplierById(id: string) {
   const supplier = await Supplier.findById(id);
   if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
+
+  const pos = await PurchaseOrder.find({ supplier: id, isActive: true });
+  const outstandingBalance = Math.round(
+    pos.reduce((sum, po) => sum + Math.max(0, po.totalAmount - (po.paidAmount ?? 0)), 0) * 100
+  ) / 100;
+
+  if (Math.round(supplier.balance * 100) !== Math.round(outstandingBalance * 100)) {
+    await Supplier.findByIdAndUpdate(id, { balance: outstandingBalance });
+    supplier.balance = outstandingBalance;
+  }
+
   return supplier;
 }
 

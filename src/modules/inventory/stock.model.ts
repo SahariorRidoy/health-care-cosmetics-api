@@ -19,6 +19,8 @@ export interface IStockMovementDocument extends Document {
   reference?: string;     // e.g. PO number, WO number
   referenceModel?: string;
   referenceId?: Types.ObjectId;
+  usageQty?: number;      // original qty in usage UOM before conversion
+  usageUom?: Types.ObjectId; // usage UOM (may differ from item baseUom)
   notes?: string;
   createdBy: Types.ObjectId;
   createdAt: Date;
@@ -39,6 +41,8 @@ const stockMovementSchema = new Schema<IStockMovementDocument>(
     reference: { type: String, trim: true },
     referenceModel: { type: String },
     referenceId: { type: Schema.Types.ObjectId },
+    usageQty: { type: Number },
+    usageUom: { type: Schema.Types.ObjectId, ref: 'UOM' },
     notes: { type: String, trim: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   },

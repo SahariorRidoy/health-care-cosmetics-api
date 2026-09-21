@@ -12,6 +12,8 @@ export interface IPOItem {
   uom: Types.ObjectId;
 }
 
+export type PaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
+
 export interface IPurchaseOrderDocument extends Document {
   poNumber: string;
   supplier: Types.ObjectId;
@@ -19,6 +21,8 @@ export interface IPurchaseOrderDocument extends Document {
   items: IPOItem[];
   subtotal: number;
   totalAmount: number;
+  paidAmount: number;
+  paymentStatus: PaymentStatus;
   notes?: string;
   expectedDeliveryDate?: Date;
   isActive: boolean;
@@ -52,6 +56,12 @@ const purchaseOrderSchema = new Schema<IPurchaseOrderDocument>(
     items: { type: [poItemSchema], required: true },
     subtotal: { type: Number, required: true, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },
+    paidAmount: { type: Number, default: 0, min: 0 },
+    paymentStatus: {
+      type: String,
+      enum: ['PAID', 'PARTIAL', 'UNPAID'],
+      default: 'UNPAID',
+    },
     notes: { type: String, trim: true },
     expectedDeliveryDate: { type: Date },
     isActive: { type: Boolean, default: true },

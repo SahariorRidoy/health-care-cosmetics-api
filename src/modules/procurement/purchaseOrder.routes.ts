@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   getPurchaseOrders, getPurchaseOrder, createPurchaseOrder,
-  updatePurchaseOrder, updatePOStatus, deletePurchaseOrder,
+  updatePurchaseOrder, updatePOStatus, deletePurchaseOrder, updatePOPayment,
 } from './purchaseOrder.controller';
 import { protect } from '../../common/middleware/protect';
 import { requirePermission } from '../../common/middleware/requirePermission';
@@ -15,6 +15,7 @@ router.get('/:id', requirePermission(PERMISSIONS.PROCUREMENT_VIEW), getPurchaseO
 router.post('/', requirePermission(PERMISSIONS.PROCUREMENT_CREATE), createPurchaseOrder);
 router.patch('/:id', requirePermission(PERMISSIONS.PROCUREMENT_UPDATE), updatePurchaseOrder);
 router.patch('/:id/status', requirePermission(PERMISSIONS.PROCUREMENT_UPDATE), updatePOStatus);
+router.patch('/:id/payment', requirePermission(PERMISSIONS.PROCUREMENT_UPDATE), updatePOPayment);
 router.delete('/:id', requirePermission(PERMISSIONS.PROCUREMENT_UPDATE), deletePurchaseOrder);
 
 export default router;

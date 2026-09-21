@@ -2,6 +2,12 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type ItemType = 'RAW_MATERIAL' | 'PACKAGING' | 'SEMI_FINISHED' | 'FINISHED_GOOD';
 
+export interface IItemMaterial {
+  item: Types.ObjectId;
+  qty: number;
+  uom: Types.ObjectId;
+}
+
 export interface IItemDocument extends Document {
   name: string;
   sku: string;
@@ -14,6 +20,7 @@ export interface IItemDocument extends Document {
   costPrice: number;
   lastPurchasePrice: number;
   salePrice?: number;
+  materials: IItemMaterial[];
   isActive: boolean;
   createdBy?: Types.ObjectId;
   createdAt: Date;
@@ -37,6 +44,14 @@ const itemSchema = new Schema<IItemDocument>(
     costPrice: { type: Number, default: 0, min: 0 },
     lastPurchasePrice: { type: Number, default: 0, min: 0 },
     salePrice: { type: Number, min: 0 },
+    materials: [
+      {
+        item: { type: Schema.Types.ObjectId, ref: 'Item' },
+        qty: { type: Number },
+        uom: { type: Schema.Types.ObjectId, ref: 'UOM' },
+        _id: false,
+      },
+    ],
     isActive: { type: Boolean, default: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },

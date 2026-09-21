@@ -30,7 +30,7 @@ export const createItem = asyncHandler(async (req: Request, res: Response) => {
 
 export const updateItem = asyncHandler(async (req: Request, res: Response) => {
   const data = updateItemSchema.parse(req.body);
-  const item = await itemService.updateItem(req.params.id, data);
+  const item = await itemService.updateItem(req.params.id, data, (req as AuthRequest).user!.userId);
   sendResponse(res, 200, { item }, 'Item updated');
 });
 

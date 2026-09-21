@@ -23,6 +23,11 @@ export const createGoodsReceipt = asyncHandler(async (req: Request, res: Respons
   sendResponse(res, 201, { goodsReceipt: gr }, 'Goods receipt created');
 });
 
+export const deleteGoodsReceipt = asyncHandler(async (req: Request, res: Response) => {
+  await procurementService.deleteGoodsReceipt(req.params.id);
+  sendResponse(res, 200, null, 'Goods receipt deleted');
+});
+
 // ── Supplier Payment ──────────────────────────────────────────────────────────
 
 export const createSupplierPayment = asyncHandler(async (req: Request, res: Response) => {

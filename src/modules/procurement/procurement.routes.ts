@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  getGoodsReceipts, getGoodsReceipt, createGoodsReceipt,
+  getGoodsReceipts, getGoodsReceipt, createGoodsReceipt, deleteGoodsReceipt,
   createSupplierPayment, getSupplierPayments, getSupplierDues,
 } from './procurement.controller';
 import { protect } from '../../common/middleware/protect';
@@ -14,6 +14,7 @@ router.use(protect);
 router.get('/receipts', requirePermission(PERMISSIONS.PROCUREMENT_VIEW), getGoodsReceipts);
 router.get('/receipts/:id', requirePermission(PERMISSIONS.PROCUREMENT_VIEW), getGoodsReceipt);
 router.post('/receipts', requirePermission(PERMISSIONS.PROCUREMENT_CREATE), createGoodsReceipt);
+router.delete('/receipts/:id', requirePermission(PERMISSIONS.PROCUREMENT_UPDATE), deleteGoodsReceipt);
 
 // Supplier payments
 router.post('/payments', requirePermission(PERMISSIONS.PROCUREMENT_CREATE), createSupplierPayment);

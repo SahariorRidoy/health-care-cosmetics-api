@@ -12,6 +12,8 @@ export interface PostMovementInput {
   reference?: string;
   referenceModel?: string;
   referenceId?: string | Types.ObjectId;
+  usageQty?: number;
+  usageUom?: string | Types.ObjectId;
   notes?: string;
   createdBy: string | Types.ObjectId;
   session?: mongoose.ClientSession;
@@ -22,7 +24,7 @@ export interface PostMovementInput {
  * Updates StockBalance atomically and records a StockMovement.
  */
 export async function postMovement(input: PostMovementInput) {
-  const { type, item, warehouse, quantity, reference, referenceModel, referenceId, notes, createdBy, session } = input;
+  const { type, item, warehouse, quantity, reference, referenceModel, referenceId, usageQty, usageUom, notes, createdBy, session } = input;
 
   if (quantity === 0) throw new AppError('Movement quantity cannot be zero', 400);
 
@@ -67,6 +69,8 @@ export async function postMovement(input: PostMovementInput) {
       reference,
       referenceModel,
       referenceId,
+      usageQty,
+      usageUom,
       notes,
       createdBy,
     }],
@@ -80,32 +84,32 @@ export async function postMovement(input: PostMovementInput) {
 
 export async function getStockBalances(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
+  const lowStock = query.lowStock === 'true';
 
   const filter: Record<string, unknown> = {};
   if (query.item) filter.item = query.item;
   if (query.warehouse) filter.warehouse = query.warehouse;
 
-  const balances = StockBalance.find(filter)
-    .populate('item', 'name sku type category reorderLevel')
+  const allBalances = await StockBalance.find(filter)
+    .populate({ path: 'item', select: 'name sku type category reorderLevel isActive', match: { isActive: true } })
     .populate('warehouse', 'name code')
-    .sort({ 'item.name': 1 })
-    .skip(skip)
-    .limit(limit);
+    .sort({ updatedAt: -1 });
 
-  const [items, total] = await Promise.all([
-    balances,
-    StockBalance.countDocuments(filter),
-  ]);
+  // Filter out soft-deleted items
+  let result = allBalances.filter((b) => b.item != null);
 
-  // Filter low-stock after population
-  const result = query.lowStock === 'true'
-    ? items.filter((b) => {
-        const item = b.item as unknown as { reorderLevel: number };
-        return b.quantity <= (item?.reorderLevel ?? 0);
-      })
-    : items;
+  // Apply low-stock filter after population
+  if (lowStock) {
+    result = result.filter((b) => {
+      const item = b.item as unknown as { reorderLevel?: number };
+      return b.quantity <= (item?.reorderLevel ?? 0);
+    });
+  }
 
-  return { items: result, pagination: buildPagination(page, limit, total) };
+  const total = result.length;
+  const items = result.slice(skip, skip + limit);
+
+  return { items, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getStockMovements(query: Record<string, unknown>) {
@@ -115,11 +119,18 @@ export async function getStockMovements(query: Record<string, unknown>) {
   if (query.item) filter.item = query.item;
   if (query.warehouse) filter.warehouse = query.warehouse;
   if (query.type) filter.type = query.type;
+  if (query.reference) filter.reference = query.reference;
+
+  if (query.activeOnly === 'true') {
+    const activeItems = await Item.find({ isActive: true }).select('_id');
+    filter.item = { $in: activeItems.map((i) => i._id) };
+  }
 
   const [movements, total] = await Promise.all([
     StockMovement.find(filter)
-      .populate('item', 'name sku')
+      .populate({ path: 'item', select: 'name sku type costPrice baseUom', populate: { path: 'baseUom', select: 'symbol' } })
       .populate('warehouse', 'name code')
+      .populate('usageUom', '_id symbol')
       .populate('createdBy', 'name')
       .sort({ createdAt: -1 })
       .skip(skip)

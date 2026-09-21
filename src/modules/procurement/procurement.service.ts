@@ -161,7 +161,7 @@ export async function getGoodsReceipts(query: Record<string, unknown>) {
   const [items, total] = await Promise.all([
     GoodsReceipt.find(filter)
       .populate('supplier', 'name')
-      .populate('purchaseOrder', 'poNumber')
+      .populate('purchaseOrder', 'poNumber isActive paymentStatus paidAmount totalAmount')
       .populate('warehouse', 'name code')
       .populate('items.item', 'name sku')
       .sort({ createdAt: -1 })
@@ -171,6 +171,17 @@ export async function getGoodsReceipts(query: Record<string, unknown>) {
   ]);
 
   return { items, pagination: buildPagination(page, limit, total) };
+}
+
+export async function deleteGoodsReceipt(id: string) {
+  const gr = await GoodsReceipt.findById(id);
+  if (!gr || !gr.isActive) throw new AppError('Goods receipt not found', 404);
+
+  const po = await PurchaseOrder.findById(gr.purchaseOrder);
+  if (po && po.isActive) throw new AppError('Cannot delete a receipt that belongs to an active purchase order. Delete the purchase order instead.', 400);
+
+  gr.isActive = false;
+  return gr.save();
 }
 
 export async function getGoodsReceiptById(id: string) {
@@ -199,10 +210,6 @@ export async function createSupplierPayment(data: {
   const supplier = await Supplier.findById(data.supplier);
   if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
 
-  if (data.amount > supplier.balance) {
-    throw new AppError(`Payment amount (${data.amount}) exceeds outstanding balance (${supplier.balance})`, 400);
-  }
-
   const paymentNumber = await generatePaymentNumber();
 
   const session = await mongoose.startSession();
@@ -228,6 +235,20 @@ export async function createSupplierPayment(data: {
       { $inc: { balance: -data.amount } },
       { session },
     );
+
+    // If linked to a PO, update its paidAmount too
+    if (data.purchaseOrder) {
+      const po = await PurchaseOrder.findById(data.purchaseOrder).session(session);
+      if (po) {
+        const newPaid = Math.min(po.totalAmount, (po.paidAmount ?? 0) + data.amount);
+        const paymentStatus = newPaid >= po.totalAmount ? 'PAID' : newPaid > 0 ? 'PARTIAL' : 'UNPAID';
+        await PurchaseOrder.findByIdAndUpdate(
+          data.purchaseOrder,
+          { paidAmount: Math.round(newPaid * 100) / 100, paymentStatus },
+          { session },
+        );
+      }
+    }
 
     await session.commitTransaction();
     return payment;
@@ -260,7 +281,7 @@ export async function getSupplierDues(supplierId: string) {
   const supplier = await Supplier.findById(supplierId);
   if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
 
-  const [receipts, payments] = await Promise.all([
+  const [receipts, payments, pos] = await Promise.all([
     GoodsReceipt.find({ supplier: supplierId, isActive: true })
       .populate('purchaseOrder', 'poNumber')
       .populate('items.item', 'name sku')
@@ -269,14 +290,21 @@ export async function getSupplierDues(supplierId: string) {
     SupplierPayment.find({ supplier: supplierId, isActive: true })
       .sort({ paymentDate: -1 })
       .select('paymentNumber amount paymentDate method reference'),
+    PurchaseOrder.find({ supplier: supplierId, isActive: true }),
   ]);
 
   const totalOrdered = receipts.reduce((sum, r) => sum + r.totalAmount, 0);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const outstandingBalance = pos.reduce((sum, po) => sum + Math.max(0, po.totalAmount - (po.paidAmount ?? 0)), 0);
+
+  // Keep supplier.balance in sync
+  if (Math.round(supplier.balance * 100) !== Math.round(outstandingBalance * 100)) {
+    await Supplier.findByIdAndUpdate(supplierId, { balance: Math.round(outstandingBalance * 100) / 100 });
+  }
 
   return {
     supplier: { _id: supplier._id, name: supplier.name },
-    outstandingBalance: supplier.balance,
+    outstandingBalance: Math.round(outstandingBalance * 100) / 100,
     totalOrdered,
     totalPaid,
     receipts,

@@ -1,4 +1,5 @@
 import { PurchaseOrder, POStatus } from './purchaseOrder.model';
+import { GoodsReceipt } from './goodsReceipt.model';
 import { Supplier } from './supplier.model';
 import { Item } from '../inventory/item.model';
 import { AppError } from '../../common/utils/errors';
@@ -51,6 +52,7 @@ export async function getPurchaseOrderById(id: string) {
 export async function createPurchaseOrder(data: {
   supplier: string;
   items: { item: string; description?: string; orderedQty: number; unitPrice: number; uom: string }[];
+  paidAmount?: number;
   notes?: string;
   expectedDeliveryDate?: string;
 }, createdBy: string) {
@@ -78,12 +80,17 @@ export async function createPurchaseOrder(data: {
     totalPrice: Math.round(i.orderedQty * i.unitPrice * 100) / 100,
   }));
 
+  const paidAmount = Math.round((data.paidAmount ?? 0) * 100) / 100;
+  const paymentStatus = paidAmount >= totalAmount ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+
   return PurchaseOrder.create({
     poNumber,
     supplier: data.supplier,
     items: poItems,
     subtotal,
     totalAmount,
+    paidAmount,
+    paymentStatus,
     notes: data.notes,
     expectedDeliveryDate: data.expectedDeliveryDate,
     createdBy,
@@ -117,6 +124,39 @@ export async function updatePurchaseOrder(id: string, data: {
   return PurchaseOrder.findByIdAndUpdate(id, update, { new: true, runValidators: true });
 }
 
+export async function updatePOPayment(id: string, paidAmount: number) {
+  const po = await PurchaseOrder.findById(id);
+  if (!po || !po.isActive) throw new AppError('Purchase order not found', 404);
+
+  const rounded = Math.round(paidAmount * 100) / 100;
+  const diff = rounded - (po.paidAmount ?? 0);
+  const paymentStatus = rounded >= po.totalAmount ? 'PAID' : rounded > 0 ? 'PARTIAL' : 'UNPAID';
+
+  const session = await (await import('mongoose')).default.startSession();
+  session.startTransaction();
+  try {
+    await PurchaseOrder.findByIdAndUpdate(
+      id,
+      { paidAmount: rounded, paymentStatus },
+      { new: true, runValidators: true, session },
+    );
+    if (diff !== 0) {
+      await Supplier.findByIdAndUpdate(
+        po.supplier,
+        { $inc: { balance: -diff } },
+        { session },
+      );
+    }
+    await session.commitTransaction();
+    return PurchaseOrder.findById(id).populate('supplier', 'name contactPerson phone email').populate('items.item', 'name sku type').populate('items.uom', 'name symbol');
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+}
+
 // Valid status transitions
 const TRANSITIONS: Record<POStatus, POStatus[]> = {
   DRAFT: ['CONFIRMED'],
@@ -140,7 +180,7 @@ export async function updatePOStatus(id: string, newStatus: POStatus) {
 export async function deletePurchaseOrder(id: string) {
   const po = await PurchaseOrder.findById(id);
   if (!po || !po.isActive) throw new AppError('Purchase order not found', 404);
-  if (po.status !== 'DRAFT') throw new AppError('Only DRAFT purchase orders can be deleted', 400);
+  await GoodsReceipt.updateMany({ purchaseOrder: id }, { isActive: false });
   po.isActive = false;
   return po.save();
 }

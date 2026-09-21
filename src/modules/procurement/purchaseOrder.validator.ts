@@ -11,6 +11,7 @@ const poItemSchema = z.object({
 export const createPOSchema = z.object({
   supplier: z.string().min(1, 'Supplier is required'),
   items: z.array(poItemSchema).min(1, 'At least one item is required'),
+  paidAmount: z.number().min(0).optional().default(0),
   notes: z.string().trim().optional(),
   expectedDeliveryDate: z.string().datetime().optional(),
 });
@@ -23,4 +24,8 @@ export const updatePOSchema = z.object({
 
 export const updatePOStatusSchema = z.object({
   status: z.enum(['CONFIRMED', 'CLOSED']),
+});
+
+export const updatePaymentSchema = z.object({
+  paidAmount: z.number().min(0, 'Paid amount must be 0 or more'),
 });
