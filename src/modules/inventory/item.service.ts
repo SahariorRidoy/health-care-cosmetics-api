@@ -48,9 +48,22 @@ export async function getItems(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
 
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.search) filter.$text = { $search: String(query.search) };
-  if (query.type) filter.type = query.type;
+  if (query.search) {
+    const regex = { $regex: String(query.search), $options: 'i' };
+    filter.$or = [{ name: regex }, { sku: regex }];
+  }
+  if (query.isActive !== undefined) filter.isActive = query.isActive === 'true';
+  if (query.type) {
+    filter.type = query.type;
+  } else {
+    filter.type = { $ne: 'FINISHED_GOOD' };
+  }
   if (query.supplier) filter.supplier = query.supplier;
+
+  const sortField = String(query.sortBy ?? 'createdAt');
+  const sortOrder = query.sortDir === 'asc' ? 1 : -1;
+  const allowedSorts: Record<string, string> = { name: 'name', createdAt: 'createdAt', currentStock: 'currentStock', costPrice: 'costPrice' };
+  const sortKey = allowedSorts[sortField] ?? 'createdAt';
 
   const [items, total] = await Promise.all([
     Item.find(filter)
@@ -58,7 +71,7 @@ export async function getItems(query: Record<string, unknown>) {
       .populate('supplier', 'name')
       .populate('materials.item', 'name')
       .populate('materials.uom', 'name symbol')
-      .sort({ name: 1 })
+      .sort({ [sortKey]: sortOrder })
       .skip(skip)
       .limit(limit),
     Item.countDocuments(filter),
@@ -82,6 +95,7 @@ export async function createItem(data: {
   description?: string; baseUom: string;
   supplier?: string; unitPrice?: number; quantity?: number;
   warehouse?: string; costPrice?: number; salePrice?: number;
+  reorderLevel?: number;
   notes?: string; expectedDeliveryDate?: string; paidAmount?: number;
   materials?: { item: string; qty: number; uom: string; warehouse: string }[];
 }, userId: string) {
@@ -105,6 +119,7 @@ export async function createItem(data: {
       baseUom: data.baseUom,
       costPrice: data.costPrice ?? 0,
       salePrice: data.salePrice,
+      reorderLevel: data.reorderLevel ?? 0,
       createdBy: userId,
     });
 
@@ -278,7 +293,7 @@ export async function createItem(data: {
 export async function updateItem(id: string, data: Partial<{
   name: string; sku: string; type: ItemType;
   description: string; baseUom: string; supplier: string;
-  costPrice: number; salePrice: number; isActive: boolean;
+  costPrice: number; salePrice: number; reorderLevel: number; isActive: boolean;
   quantity: number; warehouse: string;
   materials: { item: string; qty: number; uom: string; warehouse: string }[];
 }>, userId: string) {

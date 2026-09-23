@@ -157,6 +157,10 @@ export async function getGoodsReceipts(query: Record<string, unknown>) {
   if (query.purchaseOrder) filter.purchaseOrder = query.purchaseOrder;
   if (query.supplier) filter.supplier = query.supplier;
   if (query.item) filter['items.item'] = query.item;
+  if (query.search) {
+    const regex = { $regex: String(query.search), $options: 'i' };
+    filter.$or = [{ grNumber: regex }];
+  }
 
   const [items, total] = await Promise.all([
     GoodsReceipt.find(filter)

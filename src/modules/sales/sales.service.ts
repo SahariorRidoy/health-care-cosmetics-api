@@ -63,8 +63,21 @@ export async function getSalesOrders(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.customer) filter.customer = query.customer;
   if (query.status) filter.status = query.status;
+  if (query.search) {
+    const customerIds = await Customer.find({
+      isActive: true,
+      $or: [
+        { name: { $regex: query.search, $options: 'i' } },
+        { phone: { $regex: query.search, $options: 'i' } },
+      ],
+    }).distinct('_id');
+    filter.$or = [
+      { orderNumber: { $regex: query.search, $options: 'i' } },
+      { customer: { $in: customerIds } },
+    ];
+  }
 
-  const [items, total] = await Promise.all([
+  const [orders, total] = await Promise.all([
     SalesOrder.find(filter)
       .populate('customer', 'name')
       .populate('warehouse', 'name code')
@@ -73,6 +86,21 @@ export async function getSalesOrders(query: Record<string, unknown>) {
       .limit(limit),
     SalesOrder.countDocuments(filter),
   ]);
+
+  const orderIds = orders.map((o) => o._id);
+  const invoices = await Invoice.find({ salesOrder: { $in: orderIds }, isActive: true })
+    .select('salesOrder paidAmount dueAmount');
+  const invoiceMap = new Map(invoices.map((inv) => [String(inv.salesOrder), inv]));
+
+  const items = orders.map((o) => {
+    const inv = invoiceMap.get(String(o._id));
+    return Object.assign(o.toObject(), {
+      invoiceId: inv?._id ?? null,
+      paidAmount: inv?.paidAmount ?? 0,
+      dueAmount: inv?.dueAmount ?? 0,
+    });
+  });
+
   return { items, pagination: buildPagination(page, limit, total) };
 }
 
@@ -117,9 +145,7 @@ export async function createSalesOrder(
   const orderNumber = await generateOrderNumber();
   const soItems = buildItems(data.items);
   const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
-  const finalStatus = (data.status ?? 'CONFIRMED') as SalesOrderStatus;
-  const needsDispatch = finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
-  const needsInvoice = finalStatus === 'CONFIRMED' || finalStatus === 'DISPATCHED' || finalStatus === 'CLOSED';
+  const finalStatus: SalesOrderStatus = 'ACTIVE';
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -140,53 +166,47 @@ export async function createSalesOrder(
       createdBy,
     }], { session });
 
-    // Stock dispatch for DISPATCHED/CLOSED
-    if (needsDispatch) {
-      for (const item of soItems) {
-        await postMovement({
-          type: 'SALES_DISPATCH',
-          item: item.item,
-          warehouse: data.warehouse,
-          quantity: -item.qty,
-          reference: orderNumber,
-          referenceModel: 'SalesOrder',
-          referenceId: order._id as unknown as string,
-          notes: `Dispatch for order ${orderNumber}`,
-          createdBy,
-          session,
-        });
-      }
+    // Deduct stock immediately on sale
+    for (const item of soItems) {
+      await postMovement({
+        type: 'SALES_DISPATCH',
+        item: item.item,
+        warehouse: data.warehouse,
+        quantity: -item.qty,
+        reference: orderNumber,
+        referenceModel: 'SalesOrder',
+        referenceId: order._id as unknown as string,
+        notes: `Sale ${orderNumber}`,
+        createdBy,
+        session,
+      });
     }
 
-    // Auto-create invoice for DISPATCHED/CLOSED
-    let invoice = null;
-    if (needsInvoice) {
-      const invoiceNumber = await generateInvoiceNumber();
-      const [inv] = await Invoice.create([{
-        invoiceNumber,
-        customer: data.customer,
-        salesOrder: order._id,
-        items: soItems,
-        subtotal,
-        discountAmount,
-        taxPercent: data.taxPercent,
-        taxAmount,
-        totalAmount,
-        paidAmount: 0,
-        dueAmount: totalAmount,
-        createdBy,
-      }], { session });
-      invoice = inv;
-      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: totalAmount } }, { session });
-    }
+    // Auto-create invoice
+    const invoiceNumber = await generateInvoiceNumber();
+    const [invoice] = await Invoice.create([{
+      invoiceNumber,
+      customer: data.customer,
+      salesOrder: order._id,
+      items: soItems,
+      subtotal,
+      discountAmount,
+      taxPercent: data.taxPercent,
+      taxAmount,
+      totalAmount,
+      paidAmount: 0,
+      dueAmount: totalAmount,
+      createdBy,
+    }], { session });
+    await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: totalAmount } }, { session });
 
     // Auto-record payment if provided
-    if (data.payment && invoice) {
+    if (data.payment) {
       const payAmt = data.payment.amount;
       const changeAmount = round2(Math.max(0, payAmt - totalAmount));
       const appliedAmt = round2(Math.min(payAmt, totalAmount));
-      const newDue = round2(totalAmount - appliedAmt);
-      const invoiceStatus = newDue <= 0 ? 'PAID' : 'PARTIAL';
+      const newDue = round2(Math.max(0, totalAmount - appliedAmt));
+      const invoiceStatus = appliedAmt >= totalAmount ? 'PAID' : 'PARTIAL';
       const receiptNumber = await generateReceiptNumber();
       await CustomerPayment.create([{
         receiptNumber,
@@ -220,91 +240,50 @@ export async function createSalesOrder(
 
 export async function updateSalesOrder(
   id: string,
-  data: {
-    items?: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
-    taxPercent?: number;
-    notes?: string;
-  },
+  data: { notes?: string },
 ) {
   const order = await SalesOrder.findById(id);
   if (!order || !order.isActive) throw new AppError('Sales order not found', 404);
-  if (order.status !== 'DRAFT') throw new AppError('Only DRAFT orders can be edited', 400);
-
+  if (order.status !== 'ACTIVE') throw new AppError('Only active orders can be edited', 400);
   const update: Record<string, unknown> = {};
   if (data.notes !== undefined) update.notes = data.notes;
-
-  if (data.items) {
-    const taxPercent = data.taxPercent ?? order.taxPercent;
-    const items = buildItems(data.items);
-    const totals = calcOrderTotals(data.items, taxPercent);
-    Object.assign(update, { items, taxPercent, ...totals });
-  } else if (data.taxPercent !== undefined) {
-    const rawItems = order.items.map((i) => ({
-      qty: i.qty, unitPrice: i.unitPrice, discount: i.discount,
-    }));
-    const totals = calcOrderTotals(rawItems, data.taxPercent);
-    Object.assign(update, { taxPercent: data.taxPercent, ...totals });
-  }
-
   return SalesOrder.findByIdAndUpdate(id, update, { new: true, runValidators: true });
 }
 
-const SO_TRANSITIONS: Record<SalesOrderStatus, SalesOrderStatus[]> = {
-  DRAFT: ['CONFIRMED', 'DISPATCHED', 'CANCELLED'],
-  CONFIRMED: ['DISPATCHED', 'CANCELLED'],
-  DISPATCHED: ['CLOSED'],
-  CLOSED: [],
-  CANCELLED: [],
-};
-
-export async function updateSalesOrderStatus(id: string, newStatus: SalesOrderStatus, userId: string) {
+export async function cancelSalesOrder(id: string) {
   const order = await SalesOrder.findById(id);
   if (!order || !order.isActive) throw new AppError('Sales order not found', 404);
-  if (!SO_TRANSITIONS[order.status].includes(newStatus)) {
-    throw new AppError(`Cannot transition from ${order.status} to ${newStatus}`, 400);
-  }
-
-  // T49 — dispatch triggers SALES_DISPATCH stock movement
-  if (newStatus === 'DISPATCHED') {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    try {
-      for (const item of order.items) {
-        await postMovement({
-          type: 'SALES_DISPATCH',
-          item: item.item,
-          warehouse: order.warehouse,
-          quantity: -item.qty,   // negative = stock out
-          reference: order.orderNumber,
-          referenceModel: 'SalesOrder',
-          referenceId: order._id as unknown as string,
-          notes: `Dispatch for order ${order.orderNumber}`,
-          createdBy: userId,
-          session,
-        });
-      }
-      order.status = newStatus;
-      await order.save({ session });
-      await session.commitTransaction();
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
-    return order;
-  }
-
-  order.status = newStatus;
+  if (order.status === 'CANCELLED') throw new AppError('Order is already cancelled', 400);
+  order.status = 'CANCELLED';
   return order.save();
 }
 
 export async function deleteSalesOrder(id: string) {
   const order = await SalesOrder.findById(id);
   if (!order || !order.isActive) throw new AppError('Sales order not found', 404);
-  if (order.status !== 'DRAFT') throw new AppError('Only DRAFT orders can be deleted', 400);
-  order.isActive = false;
-  return order.save();
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    await SalesOrder.findByIdAndUpdate(id, { isActive: false }, { session });
+
+    const invoice = await Invoice.findOne({ salesOrder: id, isActive: true }).session(session);
+    if (invoice) {
+      if (invoice.dueAmount > 0) {
+        await Customer.findByIdAndUpdate(invoice.customer, { $inc: { balance: -invoice.dueAmount } }, { session });
+      }
+      await CustomerPayment.updateMany({ invoice: invoice._id }, { isActive: false }, { session });
+      await Invoice.findByIdAndUpdate(invoice._id, { isActive: false }, { session });
+    }
+
+    await session.commitTransaction();
+    return order;
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }
 
 // ── Invoices (T46) ────────────────────────────────────────────────────────────
@@ -315,6 +294,31 @@ export async function getInvoices(query: Record<string, unknown>) {
   if (query.customer) filter.customer = query.customer;
   if (query.status) filter.status = query.status;
   if (query.salesOrder) filter.salesOrder = query.salesOrder;
+
+  if (query.search) {
+    const customerIds = await Customer.find({
+      isActive: true,
+      $or: [
+        { name: { $regex: query.search, $options: 'i' } },
+        { phone: { $regex: query.search, $options: 'i' } },
+      ],
+    }).distinct('_id');
+    filter.$or = [
+      { invoiceNumber: { $regex: query.search, $options: 'i' } },
+      { customer: { $in: customerIds } },
+    ];
+  }
+
+  if (query.dateFrom || query.dateTo) {
+    const dateFilter: Record<string, Date> = {};
+    if (query.dateFrom) dateFilter.$gte = new Date(query.dateFrom as string);
+    if (query.dateTo) {
+      const to = new Date(query.dateTo as string);
+      to.setHours(23, 59, 59, 999);
+      dateFilter.$lte = to;
+    }
+    filter.createdAt = dateFilter;
+  }
 
   const [items, total] = await Promise.all([
     Invoice.find(filter)
@@ -337,6 +341,29 @@ export async function getInvoiceById(id: string) {
     .populate('createdBy', 'name');
   if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
   return invoice;
+}
+
+export async function deleteInvoice(id: string) {
+  const invoice = await Invoice.findById(id);
+  if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    // Reverse whatever balance remains (paid portion already cleared, reverse due)
+    if (invoice.dueAmount > 0) {
+      await Customer.findByIdAndUpdate(invoice.customer, { $inc: { balance: -invoice.dueAmount } }, { session });
+    }
+    await CustomerPayment.updateMany({ invoice: invoice._id }, { isActive: false }, { session });
+    invoice.isActive = false;
+    await invoice.save({ session });
+    await session.commitTransaction();
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }
 
 export async function createInvoice(
@@ -425,7 +452,8 @@ export async function createCustomerPayment(
   const appliedAmt = round2(Math.min(data.amount, invoice.dueAmount));
   const receiptNumber = await generateReceiptNumber();
   const newPaid = round2(invoice.paidAmount + appliedAmt);
-  const newDue = 0;
+  const newDue = round2(Math.max(0, invoice.totalAmount - newPaid));
+  const invoiceStatus = newPaid >= invoice.totalAmount ? 'PAID' : 'PARTIAL';
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -448,7 +476,7 @@ export async function createCustomerPayment(
 
     await Invoice.findByIdAndUpdate(
       data.invoice,
-      { paidAmount: newPaid, dueAmount: newDue, status: 'PAID' },
+      { paidAmount: newPaid, dueAmount: newDue, status: invoiceStatus },
       { session },
     );
 
@@ -469,6 +497,48 @@ export async function createCustomerPayment(
   }
 }
 
+export async function getAllPayments(query: Record<string, unknown>) {
+  const { page, limit, skip } = parsePagination(query);
+  const filter: Record<string, unknown> = { isActive: true };
+  if (query.method) filter.method = query.method;
+
+  if (query.search) {
+    const customerIds = await Customer.find({
+      isActive: true,
+      $or: [
+        { name: { $regex: query.search, $options: 'i' } },
+        { phone: { $regex: query.search, $options: 'i' } },
+      ],
+    }).distinct('_id');
+    filter.$or = [
+      { receiptNumber: { $regex: query.search, $options: 'i' } },
+      { customer: { $in: customerIds } },
+    ];
+  }
+
+  if (query.dateFrom || query.dateTo) {
+    const dateFilter: Record<string, Date> = {};
+    if (query.dateFrom) dateFilter.$gte = new Date(query.dateFrom as string);
+    if (query.dateTo) {
+      const to = new Date(query.dateTo as string);
+      to.setHours(23, 59, 59, 999);
+      dateFilter.$lte = to;
+    }
+    filter.paymentDate = dateFilter;
+  }
+
+  const [payments, total] = await Promise.all([
+    CustomerPayment.find(filter)
+      .populate('customer', 'name')
+      .populate('invoice', 'invoiceNumber totalAmount')
+      .sort({ paymentDate: -1 })
+      .skip(skip)
+      .limit(limit),
+    CustomerPayment.countDocuments(filter),
+  ]);
+  return { payments, pagination: buildPagination(page, limit, total) };
+}
+
 export async function getCustomerPayments(customerId: string, query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
   const [payments, total] = await Promise.all([
@@ -480,6 +550,51 @@ export async function getCustomerPayments(customerId: string, query: Record<stri
     CustomerPayment.countDocuments({ customer: customerId, isActive: true }),
   ]);
   return { payments, pagination: buildPagination(page, limit, total) };
+}
+
+export async function getPaymentById(id: string) {
+  const payment = await CustomerPayment.findById(id)
+    .populate('customer', 'name phone email address')
+    .populate('invoice', 'invoiceNumber totalAmount paidAmount dueAmount status')
+    .populate('createdBy', 'name');
+  if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
+  return payment;
+}
+
+export async function deletePayment(id: string) {
+  const payment = await CustomerPayment.findById(id);
+  if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    payment.isActive = false;
+    await payment.save({ session });
+
+    // Reverse the invoice paid/due amounts
+    const invoice = await Invoice.findById(payment.invoice).session(session);
+    if (invoice && invoice.isActive) {
+      const newPaid = round2(Math.max(0, invoice.paidAmount - payment.amount));
+      const newDue = round2(invoice.totalAmount - newPaid);
+      const newStatus = newPaid <= 0 ? 'UNPAID' : 'PARTIAL';
+      await Invoice.findByIdAndUpdate(
+        invoice._id,
+        { paidAmount: newPaid, dueAmount: newDue, status: newStatus },
+        { session },
+      );
+    }
+
+    // Restore customer balance (they owe us again)
+    await Customer.findByIdAndUpdate(payment.customer, { $inc: { balance: payment.amount } }, { session });
+
+    await session.commitTransaction();
+    return payment;
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }
 
 // ── Customer Dues (T48) ───────────────────────────────────────────────────────

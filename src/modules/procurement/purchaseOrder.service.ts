@@ -24,6 +24,10 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.supplier) filter.supplier = query.supplier;
   if (query.status) filter.status = query.status;
+  if (query.search) {
+    const regex = { $regex: String(query.search), $options: 'i' };
+    filter.$or = [{ poNumber: regex }];
+  }
 
   const [items, total] = await Promise.all([
     PurchaseOrder.find(filter)

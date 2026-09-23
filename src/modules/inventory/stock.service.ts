@@ -89,6 +89,11 @@ export async function getStockBalances(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = {};
   if (query.item) filter.item = query.item;
   if (query.warehouse) filter.warehouse = query.warehouse;
+  if (query.search) {
+    const regex = { $regex: String(query.search), $options: 'i' };
+    const matchedItems = await Item.find({ $or: [{ name: regex }, { sku: regex }], isActive: true }).select('_id');
+    filter.item = { $in: matchedItems.map((i) => i._id) };
+  }
 
   const allBalances = await StockBalance.find(filter)
     .populate({ path: 'item', select: 'name sku type category reorderLevel isActive', match: { isActive: true } })

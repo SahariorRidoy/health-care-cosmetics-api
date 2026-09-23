@@ -1,6 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
-export type SalesOrderStatus = 'DRAFT' | 'CONFIRMED' | 'DISPATCHED' | 'CLOSED' | 'CANCELLED';
+export type SalesOrderStatus = 'ACTIVE' | 'CANCELLED';
 
 export interface ISalesOrderItem {
   item: Types.ObjectId;
@@ -50,8 +50,8 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
     customer: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
     status: {
       type: String,
-      enum: ['DRAFT', 'CONFIRMED', 'DISPATCHED', 'CLOSED', 'CANCELLED'],
-      default: 'CONFIRMED',
+      enum: ['ACTIVE', 'CANCELLED'],
+      default: 'ACTIVE',
     },
     items: { type: [soItemSchema], required: true },
     subtotal: { type: Number, required: true, min: 0 },

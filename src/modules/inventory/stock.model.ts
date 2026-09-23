@@ -8,7 +8,10 @@ export type MovementType =
   | 'ADJUSTMENT'
   | 'TRANSFER'
   | 'RETURN_SUPPLIER'
-  | 'RETURN_CUSTOMER';
+  | 'RETURN_CUSTOMER'
+  | 'FACTORY_DISPATCH'
+  | 'FACTORY_RECEIPT'
+  | 'FACTORY_RETURN';
 
 export interface IStockMovementDocument extends Document {
   type: MovementType;
@@ -32,7 +35,8 @@ const stockMovementSchema = new Schema<IStockMovementDocument>(
       type: String,
       required: true,
       enum: ['PURCHASE_RECEIPT', 'PRODUCTION_ISSUE', 'PRODUCTION_OUTPUT', 'SALES_DISPATCH',
-             'ADJUSTMENT', 'TRANSFER', 'RETURN_SUPPLIER', 'RETURN_CUSTOMER'],
+             'ADJUSTMENT', 'TRANSFER', 'RETURN_SUPPLIER', 'RETURN_CUSTOMER',
+             'FACTORY_DISPATCH', 'FACTORY_RECEIPT', 'FACTORY_RETURN'],
     },
     item: { type: Schema.Types.ObjectId, ref: 'Item', required: true },
     warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },

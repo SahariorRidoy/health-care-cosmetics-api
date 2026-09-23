@@ -7,7 +7,10 @@ export async function getSuppliers(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
 
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.search) filter.$text = { $search: String(query.search) };
+  if (query.search) {
+    const regex = { $regex: String(query.search), $options: 'i' };
+    filter.$or = [{ name: regex }, { contactPerson: regex }, { phone: regex }, { email: regex }];
+  }
 
   const [items, total] = await Promise.all([
     Supplier.find(filter).sort({ name: 1 }).skip(skip).limit(limit),

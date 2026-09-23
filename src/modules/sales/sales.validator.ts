@@ -15,7 +15,6 @@ export const createSalesOrderSchema = z.object({
   items: z.array(orderItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
   notes: z.string().trim().optional(),
-  status: z.enum(['DRAFT', 'CONFIRMED', 'DISPATCHED', 'CLOSED']).default('CONFIRMED'),
   payment: z.object({
     amount: z.number().positive(),
     method: z.string().min(1),
@@ -25,13 +24,7 @@ export const createSalesOrderSchema = z.object({
 });
 
 export const updateSalesOrderSchema = z.object({
-  items: z.array(orderItemSchema).min(1).optional(),
-  taxPercent: z.number().min(0).max(100).optional(),
   notes: z.string().trim().optional(),
-});
-
-export const updateSalesOrderStatusSchema = z.object({
-  status: z.enum(['DRAFT', 'CONFIRMED', 'DISPATCHED', 'CLOSED', 'CANCELLED']),
 });
 
 // Invoice

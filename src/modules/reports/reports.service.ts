@@ -276,7 +276,7 @@ export async function getSalesSummary(query: { from?: string; to?: string }) {
       { $limit: 10 },
     ]),
     SalesOrder.aggregate([
-      { $match: { ...matchStage, status: { $in: ['DISPATCHED', 'CLOSED'] } } },
+      { $match: { ...matchStage, status: { $in: ['ACTIVE'] } } },
       { $unwind: '$items' },
       {
         $group: {
