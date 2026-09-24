@@ -390,6 +390,219 @@ export async function updateItem(id: string, data: Partial<{
   return await Item.findById(id).populate('baseUom', 'name symbol').populate('supplier', 'name');
 }
 
+export async function bulkPurchaseItems(data: {
+  supplier: string;
+  warehouse: string;
+  items: Array<
+    | { mode: 'existing'; item: string; quantity: number; unitPrice: number; reorderLevel?: number }
+    | { mode: 'new'; name: string; sku?: string; type: ItemType; baseUom: string; description?: string; quantity: number; unitPrice: number; reorderLevel?: number }
+  >;
+  paidAmount?: number;
+  paymentMethod?: string;
+  notes?: string;
+}, userId: string) {
+  const supplier = await Supplier.findById(data.supplier);
+  if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
+
+  const warehouse = await Warehouse.findById(data.warehouse);
+  if (!warehouse || !warehouse.isActive) throw new AppError('Warehouse not found', 404);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Resolve all items — create new ones within the transaction
+    const resolvedItems: { itemId: string; baseUom: string; quantity: number; unitPrice: number }[] = [];
+
+    for (const line of data.items) {
+      if (line.mode === 'existing') {
+        const doc = await Item.findById(line.item).session(session);
+        if (!doc || !doc.isActive) throw new AppError(`Item not found: ${line.item}`, 404);
+        if (line.reorderLevel !== undefined) {
+          await Item.findByIdAndUpdate(line.item, { reorderLevel: line.reorderLevel }, { session });
+        }
+        resolvedItems.push({ itemId: line.item, baseUom: String(doc.baseUom), quantity: line.quantity, unitPrice: line.unitPrice });
+      } else {
+        const sku = line.sku ? line.sku.toUpperCase() : await generateSKU(line.name);
+        const exists = await Item.findOne({ sku }).session(session);
+        if (exists) throw new AppError(`Item with SKU ${sku} already exists`, 409);
+        const [newItem] = await Item.create(
+          [{ name: line.name, sku, type: line.type, description: line.description, baseUom: line.baseUom, supplier: data.supplier, costPrice: line.unitPrice, lastPurchasePrice: line.unitPrice, reorderLevel: line.reorderLevel ?? 0, createdBy: userId }],
+          { session },
+        );
+        resolvedItems.push({ itemId: String(newItem._id), baseUom: line.baseUom, quantity: line.quantity, unitPrice: line.unitPrice });
+      }
+    }
+
+    const totalAmount = Math.round(resolvedItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0) * 100) / 100;
+    const paidAmount = Math.round((data.paidAmount ?? 0) * 100) / 100;
+    const paymentStatus = paidAmount >= totalAmount ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+
+    const poNumber = await generatePONumber();
+    const poItems = resolvedItems.map((i) => ({
+      item: i.itemId,
+      orderedQty: i.quantity,
+      receivedQty: i.quantity,
+      unitPrice: i.unitPrice,
+      totalPrice: Math.round(i.quantity * i.unitPrice * 100) / 100,
+      uom: i.baseUom,
+    }));
+
+    const [po] = await PurchaseOrder.create(
+      [{ poNumber, supplier: data.supplier, status: 'CONFIRMED', items: poItems, subtotal: totalAmount, totalAmount, paidAmount, paymentStatus, notes: data.notes, createdBy: userId }],
+      { session },
+    );
+
+    const grNumber = await generateGRNumber();
+    const [gr] = await GoodsReceipt.create(
+      [{ grNumber, purchaseOrder: po._id, supplier: data.supplier, warehouse: data.warehouse, items: poItems, totalAmount, notes: data.notes, receivedDate: new Date(), createdBy: userId }],
+      { session },
+    );
+
+    await PurchaseOrder.findByIdAndUpdate(po._id, { status: 'RECEIVED' }, { session });
+
+    for (const i of resolvedItems) {
+      await postMovement({
+        type: 'PURCHASE_RECEIPT',
+        item: i.itemId,
+        warehouse: data.warehouse,
+        quantity: i.quantity,
+        reference: grNumber,
+        referenceModel: 'GoodsReceipt',
+        referenceId: String(gr._id),
+        notes: `Purchase from ${supplier.name}`,
+        createdBy: userId,
+        session,
+      });
+      await Item.findByIdAndUpdate(i.itemId, { lastPurchasePrice: i.unitPrice, supplier: data.supplier }, { session });
+    }
+
+    await Supplier.findByIdAndUpdate(data.supplier, { $inc: { balance: totalAmount } }, { session });
+
+    await session.commitTransaction();
+    return { poNumber, grNumber };
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function repurchaseItem(id: string, data: {
+  supplier: string;
+  warehouse: string;
+  quantity: number;
+  unitPrice: number;
+  paidAmount?: number;
+  paymentMethod?: string;
+  notes?: string;
+}, userId: string) {
+  const item = await Item.findById(id);
+  if (!item || !item.isActive) throw new AppError('Item not found', 404);
+
+  const supplier = await Supplier.findById(data.supplier);
+  if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
+
+  const warehouse = await Warehouse.findById(data.warehouse);
+  if (!warehouse || !warehouse.isActive) throw new AppError('Warehouse not found', 404);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const totalAmount = Math.round(data.quantity * data.unitPrice * 100) / 100;
+    const paidAmount = Math.round((data.paidAmount ?? 0) * 100) / 100;
+    const paymentStatus = paidAmount >= totalAmount ? 'PAID' : paidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+
+    const poNumber = await generatePONumber();
+    const [po] = await PurchaseOrder.create(
+      [{
+        poNumber,
+        supplier: data.supplier,
+        status: 'CONFIRMED',
+        items: [{
+          item: item._id,
+          orderedQty: data.quantity,
+          receivedQty: data.quantity,
+          unitPrice: data.unitPrice,
+          totalPrice: totalAmount,
+          uom: item.baseUom,
+        }],
+        subtotal: totalAmount,
+        totalAmount,
+        paidAmount,
+        paymentStatus,
+        notes: data.notes,
+        createdBy: userId,
+      }],
+      { session },
+    );
+
+    const grNumber = await generateGRNumber();
+    const [gr] = await GoodsReceipt.create(
+      [{
+        grNumber,
+        purchaseOrder: po._id,
+        supplier: data.supplier,
+        warehouse: data.warehouse,
+        items: [{
+          item: item._id,
+          orderedQty: data.quantity,
+          receivedQty: data.quantity,
+          unitPrice: data.unitPrice,
+          totalPrice: totalAmount,
+          uom: item.baseUom,
+        }],
+        totalAmount,
+        notes: data.notes,
+        receivedDate: new Date(),
+        createdBy: userId,
+      }],
+      { session },
+    );
+
+    await PurchaseOrder.findByIdAndUpdate(po._id, { status: 'RECEIVED' }, { session });
+
+    await postMovement({
+      type: 'PURCHASE_RECEIPT',
+      item: String(item._id),
+      warehouse: data.warehouse,
+      quantity: data.quantity,
+      reference: grNumber,
+      referenceModel: 'GoodsReceipt',
+      referenceId: String(gr._id),
+      notes: `Repurchase from ${supplier.name}`,
+      createdBy: userId,
+      session,
+    });
+
+    // Update item's last purchase price and supplier
+    await Item.findByIdAndUpdate(
+      id,
+      { lastPurchasePrice: data.unitPrice, supplier: data.supplier },
+      { session },
+    );
+
+    await Supplier.findByIdAndUpdate(
+      data.supplier,
+      { $inc: { balance: totalAmount } },
+      { session },
+    );
+
+    await session.commitTransaction();
+
+    return await Item.findById(id)
+      .populate('baseUom', 'name symbol')
+      .populate('supplier', 'name');
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+}
+
 export async function deleteItem(id: string) {
   const item = await Item.findById(id);
   if (!item) throw new AppError('Item not found', 404);

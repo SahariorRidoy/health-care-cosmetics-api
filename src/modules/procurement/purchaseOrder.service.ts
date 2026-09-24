@@ -24,12 +24,14 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.supplier) filter.supplier = query.supplier;
   if (query.status) filter.status = query.status;
+  if (query.paymentStatus) filter.paymentStatus = query.paymentStatus;
   if (query.search) {
     const regex = { $regex: String(query.search), $options: 'i' };
     filter.$or = [{ poNumber: regex }];
   }
+  const unpaidFilter = { ...filter, paymentStatus: 'UNPAID' };
 
-  const [items, total] = await Promise.all([
+  const [items, total, unpaidCount] = await Promise.all([
     PurchaseOrder.find(filter)
       .populate('supplier', 'name')
       .populate('items.item', 'name sku')
@@ -38,9 +40,10 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
       .skip(skip)
       .limit(limit),
     PurchaseOrder.countDocuments(filter),
+    PurchaseOrder.countDocuments(unpaidFilter),
   ]);
 
-  return { items, pagination: buildPagination(page, limit, total) };
+  return { items, unpaidCount, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getPurchaseOrderById(id: string) {

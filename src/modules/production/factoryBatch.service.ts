@@ -62,6 +62,9 @@ export async function getFactoryBatchById(id: string) {
     .populate('materialReturns.materials.item', 'name sku')
     .populate('materialReturns.materials.uom', 'name symbol')
     .populate('materialReturns.createdBy', 'name')
+    .populate('restockHistory.materials.item', 'name sku')
+    .populate('restockHistory.materials.uom', 'name symbol')
+    .populate('restockHistory.createdBy', 'name')
     .populate('createdBy', 'name');
 
   if (!batch || !batch.isActive) throw new AppError('Factory batch not found', 404);
@@ -461,6 +464,86 @@ export async function addMaterialReturn(id: string, data: {
       createdBy: createdBy as unknown as Types.ObjectId,
       createdAt: new Date(),
     } as typeof batch.materialReturns[0]);
+
+    await batch.save({ session });
+    await session.commitTransaction();
+    return getFactoryBatchById(id);
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function restockBatch(id: string, data: {
+  restockDate: string;
+  materials: { item: string; qty: number; uom: string }[];
+  notes?: string;
+}, createdBy: string) {
+  const batch = await FactoryBatch.findById(id);
+  if (!batch || !batch.isActive) throw new AppError('Factory batch not found', 404);
+  if (!['DISPATCHED', 'IN_PRODUCTION', 'PARTIALLY_RECEIVED'].includes(batch.status)) {
+    throw new AppError('Can only restock a batch that is DISPATCHED, IN_PRODUCTION, or PARTIALLY_RECEIVED', 400);
+  }
+
+  // Validate items are raw materials / packaging
+  for (const mat of data.materials) {
+    const itemDoc = await Item.findById(mat.item);
+    if (!itemDoc || !itemDoc.isActive) throw new AppError(`Material item not found: ${mat.item}`, 404);
+    if (!['RAW_MATERIAL', 'PACKAGING', 'SEMI_FINISHED'].includes(itemDoc.type)) {
+      throw new AppError(`Item "${itemDoc.name}" is not a raw material or packaging item`, 400);
+    }
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const restockMaterials: { item: string; qty: number; uom: string; unitCost: number }[] = [];
+
+    for (const mat of data.materials) {
+      const itemDoc = await Item.findById(mat.item).select('costPrice').session(session);
+      const unitCost = itemDoc?.costPrice ?? 0;
+
+      await postMovement({
+        type: 'FACTORY_DISPATCH',
+        item: mat.item,
+        warehouse: String(batch.warehouse),
+        quantity: -mat.qty,
+        reference: batch.fbNumber,
+        referenceModel: 'FactoryBatch',
+        referenceId: String(batch._id),
+        notes: `Restock to factory — ${batch.fbNumber} ${batch.batchName}`,
+        createdBy,
+        session,
+      });
+
+      restockMaterials.push({ item: mat.item, qty: mat.qty, uom: mat.uom, unitCost });
+
+      // Merge into dispatch.materials: increase qty + dispatchedQty for existing, or add new line
+      const existing = batch.dispatch.materials.find((m) => String(m.item) === mat.item);
+      if (existing) {
+        existing.qty += mat.qty;
+        existing.dispatchedQty += mat.qty;
+      } else {
+        batch.dispatch.materials.push({
+          item: mat.item as unknown as Types.ObjectId,
+          qty: mat.qty,
+          uom: mat.uom as unknown as Types.ObjectId,
+          dispatchedQty: mat.qty,
+          unitCost,
+        });
+      }
+    }
+
+    batch.restockHistory.push({
+      restockDate: new Date(data.restockDate),
+      materials: restockMaterials as unknown as typeof batch.restockHistory[0]['materials'],
+      notes: data.notes,
+      createdBy: createdBy as unknown as Types.ObjectId,
+      createdAt: new Date(),
+    } as typeof batch.restockHistory[0]);
 
     await batch.save({ session });
     await session.commitTransaction();

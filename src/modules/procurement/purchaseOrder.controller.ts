@@ -7,8 +7,8 @@ import { AuthRequest } from '../../common/middleware/protect';
 import { POStatus } from './purchaseOrder.model';
 
 export const getPurchaseOrders = asyncHandler(async (req: Request, res: Response) => {
-  const { items, pagination } = await poService.getPurchaseOrders(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { purchaseOrders: items }, 'Purchase orders fetched', pagination);
+  const { items, unpaidCount, pagination } = await poService.getPurchaseOrders(req.query as Record<string, unknown>);
+  sendResponse(res, 200, { purchaseOrders: items, unpaidCount }, 'Purchase orders fetched', pagination);
 });
 
 export const getPurchaseOrder = asyncHandler(async (req: Request, res: Response) => {

@@ -66,6 +66,15 @@ export interface IFactoryMaterialReturn {
   createdAt: Date;
 }
 
+export interface IRestockEntry {
+  _id: Types.ObjectId;
+  restockDate: Date;
+  materials: { item: Types.ObjectId; qty: number; uom: Types.ObjectId; unitCost: number }[];
+  notes?: string;
+  createdBy: Types.ObjectId;
+  createdAt: Date;
+}
+
 export interface IFactoryBatchDocument extends Document {
   fbNumber: string;
   batchName: string;
@@ -78,6 +87,7 @@ export interface IFactoryBatchDocument extends Document {
   };
   receipts: IFactoryReceipt[];
   materialReturns: IFactoryMaterialReturn[];
+  restockHistory: IRestockEntry[];
   expectedDeliveryDate?: Date;
   notes?: string;
   isActive: boolean;
@@ -146,6 +156,25 @@ const factoryReceiptSchema = new Schema<IFactoryReceipt>(
   { _id: true },
 );
 
+const restockEntrySchema = new Schema<IRestockEntry>(
+  {
+    restockDate: { type: Date, required: true },
+    materials: [
+      {
+        item: { type: Schema.Types.ObjectId, ref: 'Item', required: true },
+        qty: { type: Number, required: true, min: 0.001 },
+        uom: { type: Schema.Types.ObjectId, ref: 'UOM', required: true },
+        unitCost: { type: Number, default: 0, min: 0 },
+        _id: false,
+      },
+    ],
+    notes: { type: String, trim: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: true },
+);
+
 const materialReturnSchema = new Schema<IFactoryMaterialReturn>(
   {
     returnDate: { type: Date, required: true },
@@ -183,6 +212,7 @@ const factoryBatchSchema = new Schema<IFactoryBatchDocument>(
     },
     receipts: { type: [factoryReceiptSchema], default: [] },
     materialReturns: { type: [materialReturnSchema], default: [] },
+    restockHistory: { type: [restockEntrySchema], default: [] },
     expectedDeliveryDate: { type: Date },
     notes: { type: String, trim: true },
     isActive: { type: Boolean, default: true },
@@ -193,6 +223,6 @@ const factoryBatchSchema = new Schema<IFactoryBatchDocument>(
 
 factoryBatchSchema.index({ status: 1 });
 factoryBatchSchema.index({ createdAt: -1 });
-factoryBatchSchema.index({ fbNumber: 1 }, { unique: true });
+
 
 export const FactoryBatch = mongoose.model<IFactoryBatchDocument>('FactoryBatch', factoryBatchSchema);

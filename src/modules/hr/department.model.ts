@@ -19,6 +19,5 @@ const departmentSchema = new Schema<IDepartmentDocument>(
   { timestamps: true },
 );
 
-departmentSchema.index({ name: 1 });
 
 export const Department = mongoose.model<IDepartmentDocument>('Department', departmentSchema);

@@ -73,3 +73,13 @@ export const addMaterialReturnSchema = z.object({
   })).min(1, 'At least one material is required'),
   notes: z.string().trim().optional(),
 });
+
+export const restockBatchSchema = z.object({
+  restockDate: z.string().datetime(),
+  materials: z.array(z.object({
+    item: z.string().min(1, 'Item is required'),
+    qty: z.number().min(0.001, 'Quantity must be greater than 0'),
+    uom: z.string().min(1, 'UOM is required'),
+  })).min(1, 'At least one material is required'),
+  notes: z.string().trim().optional(),
+});

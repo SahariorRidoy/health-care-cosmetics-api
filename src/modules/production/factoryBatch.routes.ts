@@ -2,7 +2,7 @@ import { Router } from 'express';
 import {
   getFactoryBatches, getFactoryBatch, getFactoryLedger,
   createFactoryBatch, updateFactoryBatch, dispatchMaterials,
-  updateStatus, addReceipt, addMaterialReturn,
+  updateStatus, addReceipt, addMaterialReturn, restockBatch,
   cancelFactoryBatch, deleteFactoryBatch,
 } from './factoryBatch.controller';
 import { protect } from '../../common/middleware/protect';
@@ -21,6 +21,7 @@ router.post('/:id/dispatch', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), d
 router.patch('/:id/status', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), updateStatus);
 router.post('/:id/receipts', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), addReceipt);
 router.post('/:id/returns', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), addMaterialReturn);
+router.post('/:id/restock', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), restockBatch);
 router.patch('/:id/cancel', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), cancelFactoryBatch);
 router.delete('/:id', requirePermission(PERMISSIONS.PRODUCTION_UPDATE), deleteFactoryBatch);
 

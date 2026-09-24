@@ -8,6 +8,7 @@ import {
   updateFactoryBatchSchema,
   addReceiptSchema,
   addMaterialReturnSchema,
+  restockBatchSchema,
 } from './factoryBatch.validator';
 import { AuthRequest } from '../../common/middleware/protect';
 
@@ -59,6 +60,12 @@ export const addMaterialReturn = asyncHandler(async (req: Request, res: Response
   const data = addMaterialReturnSchema.parse(req.body);
   const batch = await factoryBatchService.addMaterialReturn(req.params.id, data, (req as AuthRequest).user!.userId);
   sendResponse(res, 200, { factoryBatch: batch }, 'Material return recorded');
+});
+
+export const restockBatch = asyncHandler(async (req: Request, res: Response) => {
+  const data = restockBatchSchema.parse(req.body);
+  const batch = await factoryBatchService.restockBatch(req.params.id, data, (req as AuthRequest).user!.userId);
+  sendResponse(res, 200, { factoryBatch: batch }, 'Materials restocked to factory');
 });
 
 export const cancelFactoryBatch = asyncHandler(async (req: Request, res: Response) => {
