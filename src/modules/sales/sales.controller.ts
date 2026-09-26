@@ -9,7 +9,9 @@ import {
   createSalesOrderSchema,
   updateSalesOrderSchema,
   createInvoiceSchema,
+  updateInvoiceSchema,
   createCustomerPaymentSchema,
+  updateCustomerPaymentSchema,
 } from './sales.validator';
 
 // ── Sales Orders ──────────────────────────────────────────────────────────────
@@ -64,6 +66,15 @@ export const createInvoice = asyncHandler(async (req: Request, res: Response) =>
   sendResponse(res, 201, { invoice }, 'Invoice created');
 });
 
+export const updateInvoice = asyncHandler(async (req: Request, res: Response) => {
+  const data = updateInvoiceSchema.parse(req.body);
+  const invoice = await salesService.updateInvoice(req.params.id, {
+    notes: data.notes,
+    dueDate: data.dueDate ?? undefined,
+  });
+  sendResponse(res, 200, { invoice }, 'Invoice updated');
+});
+
 export const deleteInvoice = asyncHandler(async (req: Request, res: Response) => {
   await salesService.deleteInvoice(req.params.id);
   sendResponse(res, 200, null, 'Invoice deleted');
@@ -89,6 +100,12 @@ export const createCustomerPayment = asyncHandler(async (req: Request, res: Resp
 export const getCustomerPayment = asyncHandler(async (req: Request, res: Response) => {
   const payment = await salesService.getPaymentById(req.params.id);
   sendResponse(res, 200, { payment }, 'Payment fetched');
+});
+
+export const updateCustomerPayment = asyncHandler(async (req: Request, res: Response) => {
+  const data = updateCustomerPaymentSchema.parse(req.body);
+  const payment = await salesService.updateCustomerPayment(req.params.id, data);
+  sendResponse(res, 200, { payment }, 'Payment updated');
 });
 
 export const downloadReceiptPDF = asyncHandler(async (req: Request, res: Response) => {

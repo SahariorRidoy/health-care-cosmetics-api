@@ -424,6 +424,18 @@ export async function createInvoice(
   }
 }
 
+export async function updateInvoice(
+  id: string,
+  data: { notes?: string; dueDate?: string },
+) {
+  const invoice = await Invoice.findById(id);
+  if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
+  const update: Record<string, unknown> = {};
+  if (data.notes !== undefined) update.notes = data.notes;
+  if (data.dueDate !== undefined) update.dueDate = data.dueDate;
+  return Invoice.findByIdAndUpdate(id, update, { new: true, runValidators: true });
+}
+
 // ── Customer Payments / Receipts (T47) ────────────────────────────────────────
 
 export async function createCustomerPayment(
@@ -636,3 +648,18 @@ export async function getCustomerDues(customerId: string) {
     payments,
   };
 }
+export async function updateCustomerPayment(
+  id: string,
+  data: { amount?: number; paymentDate?: string; method?: string; reference?: string; notes?: string },
+) {
+  const payment = await CustomerPayment.findById(id);
+  if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
+  const update: Record<string, unknown> = {};
+  if (data.amount !== undefined) update.amount = data.amount;
+  if (data.paymentDate !== undefined) update.paymentDate = data.paymentDate;
+  if (data.method !== undefined) update.method = data.method;
+  if (data.reference !== undefined) update.reference = data.reference;
+  if (data.notes !== undefined) update.notes = data.notes;
+  return CustomerPayment.findByIdAndUpdate(id, update, { new: true, runValidators: true });
+}
+
