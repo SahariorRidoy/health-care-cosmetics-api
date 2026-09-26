@@ -4,13 +4,24 @@ import { sendResponse } from '../../common/utils/response';
 import * as productionService from './production.service';
 import {
   createProductionOrderSchema, updateProductionOrderSchema,
-  materialIssueSchema, productionOutputSchema,
+  materialIssueSchema, productionOutputSchema, createProductionBatchSchema,
 } from './production.validator';
 import { AuthRequest } from '../../common/middleware/protect';
 import { ProductionStatus } from './productionOrder.model';
 import { z } from 'zod';
 
 // ── Production Orders ─────────────────────────────────────────────────────────
+
+export const getProductionBatches = asyncHandler(async (req: Request, res: Response) => {
+  const { items, pagination } = await productionService.getProductionBatches(req.query as Record<string, unknown>);
+  sendResponse(res, 200, { batches: items }, 'Production batches fetched', pagination);
+});
+
+export const createProductionBatch = asyncHandler(async (req: Request, res: Response) => {
+  const data = createProductionBatchSchema.parse(req.body);
+  const batch = await productionService.createProductionBatch(data, (req as AuthRequest).user!.userId);
+  sendResponse(res, 201, { batch }, 'Production batch recorded');
+});
 
 export const getProductionOrders = asyncHandler(async (req: Request, res: Response) => {
   const { items, pagination } = await productionService.getProductionOrders(req.query as Record<string, unknown>);

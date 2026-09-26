@@ -1,3 +1,4 @@
+
 import mongoose from 'mongoose';
 import { Item, ItemType } from './item.model';
 import { AppError } from '../../common/utils/errors';
@@ -9,6 +10,8 @@ import { Warehouse } from '../warehouse/warehouse.model';
 import { postMovement } from './stock.service';
 import { convertQty } from './uom.service';
 import { Batch } from './batch.model';
+import { ProductionBatch } from '../production/productionBatch.model';
+import { FactoryBatch } from '../production/factoryBatch.model';
 
 export async function generateSKU(name: string): Promise<string> {
   const base = name
@@ -77,7 +80,73 @@ export async function getItems(query: Record<string, unknown>) {
     Item.countDocuments(filter),
   ]);
 
-  return { items, pagination: buildPagination(page, limit, total) };
+  if (query.type !== 'FINISHED_GOOD' || items.length === 0) {
+    return { items, pagination: buildPagination(page, limit, total) };
+  }
+
+  const itemIds = items.map((item) => item._id);
+  const [productionBatches, factoryBatches] = await Promise.all([
+    ProductionBatch.find({ product: { $in: itemIds } })
+      .select('product batchNumber warehouse')
+      .populate('warehouse', 'name code'),
+    FactoryBatch.find({ 'receipts.products.linkedItem': { $in: itemIds }, isActive: true })
+      .select('fbNumber batchName receipts warehouse')
+      .populate('warehouse', 'name code'),
+  ]);
+
+  type ProductionSource = { type: 'WAREHOUSE' | 'FACTORY'; name: string; identifier: string };
+  const sourcesByItem = new Map<string, ProductionSource[]>();
+  const addSource = (itemId: string, source: ProductionSource) => {
+    const sources = sourcesByItem.get(itemId) ?? [];
+    if (!sources.some((existing) => existing.type === source.type && existing.identifier === source.identifier)) {
+      sources.push(source);
+      sourcesByItem.set(itemId, sources);
+    }
+  };
+
+  for (const batch of productionBatches) {
+    const warehouse = batch.warehouse as unknown as { name?: string } | undefined;
+    addSource(String(batch.product), {
+      type: 'WAREHOUSE',
+      name: warehouse?.name ?? 'Warehouse',
+      identifier: batch.batchNumber,
+    });
+  }
+
+  for (const batch of factoryBatches) {
+    for (const receipt of batch.receipts) {
+      for (const product of receipt.products) {
+        if (!product.linkedItem) continue;
+        addSource(String(product.linkedItem), {
+          type: 'FACTORY',
+          name: batch.batchName,
+          identifier: `${batch.fbNumber} / ${receipt.receiptNumber}`,
+        });
+      }
+    }
+  }
+
+  const enrichedItems = items.map((item) => ({
+    ...item.toObject(),
+    productionSources: sourcesByItem.get(String(item._id)) ?? [],
+  }));
+
+  return { items: enrichedItems, pagination: buildPagination(page, limit, total) };
+}
+
+export async function getFinishedGoods(query: Record<string, unknown>) {
+    const filter: Record<string, unknown> = { isActive: true, type: 'FINISHED_GOOD' };
+    if (query.search) {
+      const regex = { $regex: String(query.search), $options: 'i' };
+      filter.$or = [{ name: regex }, { sku: regex }];
+    }
+  
+    const items = await Item.find(filter)
+        .select('name sku')
+        .sort({ name: 1 })
+        .limit(25);
+  
+    return { items };
 }
 
 export async function getItemById(id: string) {

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  getProductionBatches, createProductionBatch,
   getProductionOrders, getProductionOrder, createProductionOrder,
   updateProductionOrder, updateProductionStatus, deleteProductionOrder,
   issueMaterials, recordOutput,
@@ -10,6 +11,9 @@ import { PERMISSIONS } from '../permissions/permissions.constants';
 
 const router = Router();
 router.use(protect);
+
+router.get('/batches', requirePermission(PERMISSIONS.PRODUCTION_VIEW), getProductionBatches);
+router.post('/batches', requirePermission(PERMISSIONS.PRODUCTION_CREATE), createProductionBatch);
 
 // Production Orders
 router.get('/orders', requirePermission(PERMISSIONS.PRODUCTION_VIEW), getProductionOrders);

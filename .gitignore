@@ -33,3 +33,7 @@ coverage/
 
 .vercel
 .env*
+
+# AI-related files
+agent.py
+readme.md

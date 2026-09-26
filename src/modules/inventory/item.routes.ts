@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getItems, getItem, createItem, updateItem, deleteItem, generateSku, repurchaseItem, bulkPurchaseItems } from './item.controller';
+import { getItems, getItem, createItem, updateItem, deleteItem, generateSku, repurchaseItem, bulkPurchaseItems, getFinishedGoods } from './item.controller';
 import { protect } from '../../common/middleware/protect';
 import { requirePermission } from '../../common/middleware/requirePermission';
 import { PERMISSIONS } from '../permissions/permissions.constants';
@@ -9,6 +9,7 @@ router.use(protect);
 
 router.get('/generate-sku', requirePermission(PERMISSIONS.INVENTORY_VIEW), generateSku);
 router.get('/', requirePermission(PERMISSIONS.INVENTORY_VIEW), getItems);
+router.get('/finished-goods', requirePermission(PERMISSIONS.INVENTORY_VIEW), getFinishedGoods); // New route for finished goods
 router.get('/:id', requirePermission(PERMISSIONS.INVENTORY_VIEW), getItem);
 router.post('/', requirePermission(PERMISSIONS.INVENTORY_CREATE), createItem);
 router.post('/bulk-purchase', requirePermission(PERMISSIONS.INVENTORY_CREATE), bulkPurchaseItems);

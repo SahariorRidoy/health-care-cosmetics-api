@@ -17,6 +17,12 @@ export const getItems = asyncHandler(async (req: Request, res: Response) => {
   sendResponse(res, 200, { items }, 'Items fetched', pagination);
 });
 
+// New controller function to get finished goods
+export const getFinishedGoods = asyncHandler(async (req: Request, res: Response) => {
+  const { items } = await itemService.getFinishedGoods(req.query as Record<string, unknown>);
+  sendResponse(res, 200, { items }, 'Finished goods fetched');
+});
+
 export const getItem = asyncHandler(async (req: Request, res: Response) => {
   const item = await itemService.getItemById(req.params.id);
   sendResponse(res, 200, { item }, 'Item fetched');
