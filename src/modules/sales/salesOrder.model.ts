@@ -14,7 +14,7 @@ export interface ISalesOrderItem {
 
 export interface ISalesOrderDocument extends Document {
   orderNumber: string;
-  customer: Types.ObjectId;
+  dealer: Types.ObjectId;
   status: SalesOrderStatus;
   items: ISalesOrderItem[];
   subtotal: number;
@@ -22,6 +22,8 @@ export interface ISalesOrderDocument extends Document {
   taxPercent: number;
   taxAmount: number;
   totalAmount: number;
+  commissionRate: number;   // 0–25 %
+  commissionAmount: number; // calculated
   notes?: string;
   deliveryDate?: Date;
   warehouse: Types.ObjectId;
@@ -47,7 +49,7 @@ const soItemSchema = new Schema<ISalesOrderItem>(
 const salesOrderSchema = new Schema<ISalesOrderDocument>(
   {
     orderNumber: { type: String, required: true, unique: true, trim: true },
-    customer: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
+    dealer: { type: Schema.Types.ObjectId, ref: 'Dealer', required: true },
     status: {
       type: String,
       enum: ['ACTIVE', 'CANCELLED'],
@@ -59,6 +61,8 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
     taxPercent: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 25 },
+    commissionAmount: { type: Number, default: 0, min: 0 },
     notes: { type: String, trim: true },
     deliveryDate: { type: Date },
     warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },
@@ -68,7 +72,7 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
   { timestamps: true },
 );
 
-salesOrderSchema.index({ customer: 1, status: 1 });
+salesOrderSchema.index({ dealer: 1, status: 1 });
 salesOrderSchema.index({ orderNumber: 'text' });
 salesOrderSchema.index({ createdAt: -1 });
 

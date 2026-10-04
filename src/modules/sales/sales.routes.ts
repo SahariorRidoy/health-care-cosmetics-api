@@ -29,14 +29,14 @@ router.post('/invoices', requirePermission(PERMISSIONS.SALES_CREATE), createInvo
 router.patch('/invoices/:id', requirePermission(PERMISSIONS.SALES_UPDATE), updateInvoice);
 router.delete('/invoices/:id', requirePermission(PERMISSIONS.SALES_UPDATE), deleteInvoice);
 
-// Customer payments & dues
+// Dealer payments & dues
 router.get('/payments', requirePermission(PERMISSIONS.SALES_VIEW), getAllPayments);
 router.post('/payments', requirePermission(PERMISSIONS.SALES_CREATE), createCustomerPayment);
 router.get('/payments/:id', requirePermission(PERMISSIONS.SALES_VIEW), getCustomerPayment);
 router.patch('/payments/:id', requirePermission(PERMISSIONS.SALES_UPDATE), updateCustomerPayment);
 router.get('/payments/:id/pdf', requirePermission(PERMISSIONS.SALES_VIEW), downloadReceiptPDF);
 router.delete('/payments/:id', requirePermission(PERMISSIONS.SALES_UPDATE), deletePayment);
-router.get('/customers/:customerId/payments', requirePermission(PERMISSIONS.SALES_VIEW), getCustomerPayments);
-router.get('/customers/:customerId/dues', requirePermission(PERMISSIONS.SALES_VIEW), getCustomerDues);
+router.get('/dealers/:dealerId/payments', requirePermission(PERMISSIONS.SALES_VIEW), getCustomerPayments);
+router.get('/dealers/:dealerId/dues', requirePermission(PERMISSIONS.SALES_VIEW), getCustomerDues);
 
 export default router;

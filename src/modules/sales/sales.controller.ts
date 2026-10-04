@@ -119,13 +119,13 @@ export const deletePayment = asyncHandler(async (req: Request, res: Response) =>
 
 export const getCustomerPayments = asyncHandler(async (req: Request, res: Response) => {
   const { payments, pagination } = await salesService.getCustomerPayments(
-    req.params.customerId,
+    req.params.dealerId,
     req.query as Record<string, unknown>,
   );
   sendResponse(res, 200, { payments }, 'Payments fetched', pagination);
 });
 
 export const getCustomerDues = asyncHandler(async (req: Request, res: Response) => {
-  const dues = await salesService.getCustomerDues(req.params.customerId);
-  sendResponse(res, 200, dues, 'Customer dues fetched');
+  const dues = await salesService.getCustomerDues(req.params.dealerId);
+  sendResponse(res, 200, dues, 'Dealer dues fetched');
 });

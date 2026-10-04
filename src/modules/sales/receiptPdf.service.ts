@@ -10,12 +10,12 @@ import {
 
 export async function generateReceiptPDF(paymentId: string, res: Response) {
   const payment = await CustomerPayment.findById(paymentId)
-    .populate('customer', 'name phone email address')
+    .populate('dealer', 'name phone email address')
     .populate('invoice', 'invoiceNumber totalAmount paidAmount dueAmount status');
 
   if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
 
-  const customer = payment.customer as unknown as Record<string, string>;
+  const customer = payment.dealer as unknown as Record<string, string>;
   const invoice = payment.invoice as unknown as Record<string, string | number>;
 
   // Fetch all previous payments on the same invoice (excluding this one)
@@ -36,7 +36,7 @@ export async function generateReceiptPDF(paymentId: string, res: Response) {
 
   drawSectionTitle(doc, 'Receipt Details');
   drawKeyValueGrid(doc, [
-    { label: 'Customer', value: customer?.name ?? '—' },
+    { label: 'Dealer', value: customer?.name ?? '—' },
     { label: 'Receipt Number', value: payment.receiptNumber },
     { label: 'Payment Date', value: formatDate(payment.paymentDate) },
     { label: 'Contact', value: customer?.phone ?? customer?.email ?? '—' },

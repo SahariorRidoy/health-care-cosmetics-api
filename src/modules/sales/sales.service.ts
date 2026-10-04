@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { SalesOrder, SalesOrderStatus } from './salesOrder.model';
 import { Invoice } from './invoice.model';
 import { CustomerPayment } from './customerPayment.model';
-import { Customer } from './customer.model';
+import { Dealer } from './dealer.model';
 import { Warehouse } from '../warehouse/warehouse.model';
 import { Item } from '../inventory/item.model';
 import { postMovement } from '../inventory/stock.service';
@@ -56,15 +56,15 @@ async function generateReceiptNumber(): Promise<string> {
   return `${prefix}-${String(count + 1).padStart(4, '0')}`;
 }
 
-// ── Sales Orders (T45) ────────────────────────────────────────────────────────
+// ── Sales Orders ──────────────────────────────────────────────────────────────
 
 export async function getSalesOrders(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.customer) filter.customer = query.customer;
+  if (query.dealer) filter.dealer = query.dealer;
   if (query.status) filter.status = query.status;
   if (query.search) {
-    const customerIds = await Customer.find({
+    const dealerIds = await Dealer.find({
       isActive: true,
       $or: [
         { name: { $regex: query.search, $options: 'i' } },
@@ -73,13 +73,13 @@ export async function getSalesOrders(query: Record<string, unknown>) {
     }).distinct('_id');
     filter.$or = [
       { orderNumber: { $regex: query.search, $options: 'i' } },
-      { customer: { $in: customerIds } },
+      { dealer: { $in: dealerIds } },
     ];
   }
 
   const [orders, total] = await Promise.all([
     SalesOrder.find(filter)
-      .populate('customer', 'name')
+      .populate('dealer', 'name')
       .populate('warehouse', 'name code')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -106,7 +106,7 @@ export async function getSalesOrders(query: Record<string, unknown>) {
 
 export async function getSalesOrderById(id: string) {
   const order = await SalesOrder.findById(id)
-    .populate('customer', 'name phone email')
+    .populate('dealer', 'name phone email commissionRate')
     .populate('warehouse', 'name code')
     .populate('items.item', 'name sku type')
     .populate('items.uom', 'name symbol')
@@ -117,21 +117,22 @@ export async function getSalesOrderById(id: string) {
 
 export async function createSalesOrder(
   data: {
-    customer: string;
+    dealer: string;
     warehouse: string;
     items: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
     taxPercent: number;
+    commissionRate: number;
     notes?: string;
     status?: string;
     payment?: { amount: number; method: string; reference?: string; notes?: string };
   },
   createdBy: string,
 ) {
-  const [customer, warehouse] = await Promise.all([
-    Customer.findById(data.customer),
+  const [dealer, warehouse] = await Promise.all([
+    Dealer.findById(data.dealer),
     Warehouse.findById(data.warehouse),
   ]);
-  if (!customer || !customer.isActive) throw new AppError('Customer not found', 404);
+  if (!dealer || !dealer.isActive) throw new AppError('Dealer not found', 404);
   if (!warehouse || !warehouse.isActive) throw new AppError('Warehouse not found', 404);
 
   const itemIds = data.items.map((i) => i.item);
@@ -145,6 +146,7 @@ export async function createSalesOrder(
   const orderNumber = await generateOrderNumber();
   const soItems = buildItems(data.items);
   const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
+  const commissionAmount = round2(totalAmount * (data.commissionRate / 100));
   const finalStatus: SalesOrderStatus = 'ACTIVE';
 
   const session = await mongoose.startSession();
@@ -152,7 +154,7 @@ export async function createSalesOrder(
   try {
     const [order] = await SalesOrder.create([{
       orderNumber,
-      customer: data.customer,
+      dealer: data.dealer,
       warehouse: data.warehouse,
       items: soItems,
       subtotal,
@@ -160,6 +162,8 @@ export async function createSalesOrder(
       taxPercent: data.taxPercent,
       taxAmount,
       totalAmount,
+      commissionRate: data.commissionRate,
+      commissionAmount,
       notes: data.notes,
       status: finalStatus,
       deliveryDate: new Date(),
@@ -186,7 +190,7 @@ export async function createSalesOrder(
     const invoiceNumber = await generateInvoiceNumber();
     const [invoice] = await Invoice.create([{
       invoiceNumber,
-      customer: data.customer,
+      dealer: data.dealer,
       salesOrder: order._id,
       items: soItems,
       subtotal,
@@ -196,9 +200,11 @@ export async function createSalesOrder(
       totalAmount,
       paidAmount: 0,
       dueAmount: totalAmount,
+      commissionRate: data.commissionRate,
+      commissionAmount,
       createdBy,
     }], { session });
-    await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: totalAmount } }, { session });
+    await Dealer.findByIdAndUpdate(data.dealer, { $inc: { balance: totalAmount } }, { session });
 
     // Auto-record payment if provided
     if (data.payment) {
@@ -210,7 +216,7 @@ export async function createSalesOrder(
       const receiptNumber = await generateReceiptNumber();
       await CustomerPayment.create([{
         receiptNumber,
-        customer: data.customer,
+        dealer: data.dealer,
         invoice: invoice._id,
         amount: appliedAmt,
         changeAmount,
@@ -225,7 +231,7 @@ export async function createSalesOrder(
         { paidAmount: appliedAmt, dueAmount: newDue, status: invoiceStatus },
         { session },
       );
-      await Customer.findByIdAndUpdate(data.customer, { $inc: { balance: -appliedAmt } }, { session });
+      await Dealer.findByIdAndUpdate(data.dealer, { $inc: { balance: -appliedAmt } }, { session });
     }
 
     await session.commitTransaction();
@@ -270,7 +276,7 @@ export async function deleteSalesOrder(id: string) {
     const invoice = await Invoice.findOne({ salesOrder: id, isActive: true }).session(session);
     if (invoice) {
       if (invoice.dueAmount > 0) {
-        await Customer.findByIdAndUpdate(invoice.customer, { $inc: { balance: -invoice.dueAmount } }, { session });
+        await Dealer.findByIdAndUpdate(invoice.dealer, { $inc: { balance: -invoice.dueAmount } }, { session });
       }
       await CustomerPayment.updateMany({ invoice: invoice._id }, { isActive: false }, { session });
       await Invoice.findByIdAndUpdate(invoice._id, { isActive: false }, { session });
@@ -286,17 +292,17 @@ export async function deleteSalesOrder(id: string) {
   }
 }
 
-// ── Invoices (T46) ────────────────────────────────────────────────────────────
+// ── Invoices ──────────────────────────────────────────────────────────────────
 
 export async function getInvoices(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.customer) filter.customer = query.customer;
+  if (query.dealer) filter.dealer = query.dealer;
   if (query.status) filter.status = query.status;
   if (query.salesOrder) filter.salesOrder = query.salesOrder;
 
   if (query.search) {
-    const customerIds = await Customer.find({
+    const dealerIds = await Dealer.find({
       isActive: true,
       $or: [
         { name: { $regex: query.search, $options: 'i' } },
@@ -305,7 +311,7 @@ export async function getInvoices(query: Record<string, unknown>) {
     }).distinct('_id');
     filter.$or = [
       { invoiceNumber: { $regex: query.search, $options: 'i' } },
-      { customer: { $in: customerIds } },
+      { dealer: { $in: dealerIds } },
     ];
   }
 
@@ -322,7 +328,7 @@ export async function getInvoices(query: Record<string, unknown>) {
 
   const [items, total] = await Promise.all([
     Invoice.find(filter)
-      .populate('customer', 'name')
+      .populate('dealer', 'name')
       .populate('salesOrder', 'orderNumber')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -334,7 +340,7 @@ export async function getInvoices(query: Record<string, unknown>) {
 
 export async function getInvoiceById(id: string) {
   const invoice = await Invoice.findById(id)
-    .populate('customer', 'name phone email')
+    .populate('dealer', 'name phone email')
     .populate('salesOrder', 'orderNumber')
     .populate('items.item', 'name sku')
     .populate('items.uom', 'name symbol')
@@ -350,9 +356,8 @@ export async function deleteInvoice(id: string) {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    // Reverse whatever balance remains (paid portion already cleared, reverse due)
     if (invoice.dueAmount > 0) {
-      await Customer.findByIdAndUpdate(invoice.customer, { $inc: { balance: -invoice.dueAmount } }, { session });
+      await Dealer.findByIdAndUpdate(invoice.dealer, { $inc: { balance: -invoice.dueAmount } }, { session });
     }
     await CustomerPayment.updateMany({ invoice: invoice._id }, { isActive: false }, { session });
     invoice.isActive = false;
@@ -368,21 +373,23 @@ export async function deleteInvoice(id: string) {
 
 export async function createInvoice(
   data: {
-    customer: string;
+    dealer: string;
     salesOrder?: string;
     items: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
     taxPercent: number;
+    commissionRate: number;
     dueDate?: string;
     notes?: string;
   },
   createdBy: string,
 ) {
-  const customer = await Customer.findById(data.customer);
-  if (!customer || !customer.isActive) throw new AppError('Customer not found', 404);
+  const dealer = await Dealer.findById(data.dealer);
+  if (!dealer || !dealer.isActive) throw new AppError('Dealer not found', 404);
 
   const invoiceNumber = await generateInvoiceNumber();
   const items = buildItems(data.items);
   const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
+  const commissionAmount = round2(totalAmount * (data.commissionRate / 100));
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -390,7 +397,7 @@ export async function createInvoice(
     const [invoice] = await Invoice.create(
       [{
         invoiceNumber,
-        customer: data.customer,
+        dealer: data.dealer,
         salesOrder: data.salesOrder,
         items,
         subtotal,
@@ -400,6 +407,8 @@ export async function createInvoice(
         totalAmount,
         paidAmount: 0,
         dueAmount: totalAmount,
+        commissionRate: data.commissionRate,
+        commissionAmount,
         dueDate: data.dueDate,
         notes: data.notes,
         createdBy,
@@ -407,9 +416,8 @@ export async function createInvoice(
       { session },
     );
 
-    // Increase customer balance (they owe us)
-    await Customer.findByIdAndUpdate(
-      data.customer,
+    await Dealer.findByIdAndUpdate(
+      data.dealer,
       { $inc: { balance: totalAmount } },
       { session },
     );
@@ -436,11 +444,11 @@ export async function updateInvoice(
   return Invoice.findByIdAndUpdate(id, update, { new: true, runValidators: true });
 }
 
-// ── Customer Payments / Receipts (T47) ────────────────────────────────────────
+// ── Dealer Payments / Receipts ────────────────────────────────────────────────
 
 export async function createCustomerPayment(
   data: {
-    customer: string;
+    dealer: string;
     invoice: string;
     amount: number;
     paymentDate?: string;
@@ -450,15 +458,15 @@ export async function createCustomerPayment(
   },
   createdBy: string,
 ) {
-  const [customer, invoice] = await Promise.all([
-    Customer.findById(data.customer),
+  const [dealer, invoice] = await Promise.all([
+    Dealer.findById(data.dealer),
     Invoice.findById(data.invoice),
   ]);
-  if (!customer || !customer.isActive) throw new AppError('Customer not found', 404);
+  if (!dealer || !dealer.isActive) throw new AppError('Dealer not found', 404);
   if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
   if (invoice.status === 'PAID') throw new AppError('Invoice is already fully paid', 400);
   if (invoice.status === 'CANCELLED') throw new AppError('Invoice is cancelled', 400);
-  if (String(invoice.customer) !== data.customer) throw new AppError('Invoice does not belong to this customer', 400);
+  if (String(invoice.dealer) !== data.dealer) throw new AppError('Invoice does not belong to this dealer', 400);
 
   const changeAmount = round2(Math.max(0, data.amount - invoice.dueAmount));
   const appliedAmt = round2(Math.min(data.amount, invoice.dueAmount));
@@ -473,7 +481,7 @@ export async function createCustomerPayment(
     const [payment] = await CustomerPayment.create(
       [{
         receiptNumber,
-        customer: data.customer,
+        dealer: data.dealer,
         invoice: data.invoice,
         amount: appliedAmt,
         changeAmount,
@@ -492,9 +500,8 @@ export async function createCustomerPayment(
       { session },
     );
 
-    // Decrease customer balance (they paid us)
-    await Customer.findByIdAndUpdate(
-      data.customer,
+    await Dealer.findByIdAndUpdate(
+      data.dealer,
       { $inc: { balance: -appliedAmt } },
       { session },
     );
@@ -515,7 +522,7 @@ export async function getAllPayments(query: Record<string, unknown>) {
   if (query.method) filter.method = query.method;
 
   if (query.search) {
-    const customerIds = await Customer.find({
+    const dealerIds = await Dealer.find({
       isActive: true,
       $or: [
         { name: { $regex: query.search, $options: 'i' } },
@@ -524,7 +531,7 @@ export async function getAllPayments(query: Record<string, unknown>) {
     }).distinct('_id');
     filter.$or = [
       { receiptNumber: { $regex: query.search, $options: 'i' } },
-      { customer: { $in: customerIds } },
+      { dealer: { $in: dealerIds } },
     ];
   }
 
@@ -541,7 +548,7 @@ export async function getAllPayments(query: Record<string, unknown>) {
 
   const [payments, total] = await Promise.all([
     CustomerPayment.find(filter)
-      .populate('customer', 'name')
+      .populate('dealer', 'name')
       .populate('invoice', 'invoiceNumber totalAmount')
       .sort({ paymentDate: -1 })
       .skip(skip)
@@ -551,22 +558,22 @@ export async function getAllPayments(query: Record<string, unknown>) {
   return { payments, pagination: buildPagination(page, limit, total) };
 }
 
-export async function getCustomerPayments(customerId: string, query: Record<string, unknown>) {
+export async function getCustomerPayments(dealerId: string, query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
   const [payments, total] = await Promise.all([
-    CustomerPayment.find({ customer: customerId, isActive: true })
+    CustomerPayment.find({ dealer: dealerId, isActive: true })
       .populate('invoice', 'invoiceNumber totalAmount')
       .sort({ paymentDate: -1 })
       .skip(skip)
       .limit(limit),
-    CustomerPayment.countDocuments({ customer: customerId, isActive: true }),
+    CustomerPayment.countDocuments({ dealer: dealerId, isActive: true }),
   ]);
   return { payments, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getPaymentById(id: string) {
   const payment = await CustomerPayment.findById(id)
-    .populate('customer', 'name phone email address')
+    .populate('dealer', 'name phone email address')
     .populate('invoice', 'invoiceNumber totalAmount paidAmount dueAmount status')
     .populate('createdBy', 'name');
   if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
@@ -583,7 +590,6 @@ export async function deletePayment(id: string) {
     payment.isActive = false;
     await payment.save({ session });
 
-    // Reverse the invoice paid/due amounts
     const invoice = await Invoice.findById(payment.invoice).session(session);
     if (invoice && invoice.isActive) {
       const newPaid = round2(Math.max(0, invoice.paidAmount - payment.amount));
@@ -596,8 +602,7 @@ export async function deletePayment(id: string) {
       );
     }
 
-    // Restore customer balance (they owe us again)
-    await Customer.findByIdAndUpdate(payment.customer, { $inc: { balance: payment.amount } }, { session });
+    await Dealer.findByIdAndUpdate(payment.dealer, { $inc: { balance: payment.amount } }, { session });
 
     await session.commitTransaction();
     return payment;
@@ -609,25 +614,24 @@ export async function deletePayment(id: string) {
   }
 }
 
-// ── Customer Dues (T48) ───────────────────────────────────────────────────────
+// ── Dealer Dues ───────────────────────────────────────────────────────────────
 
-export async function getCustomerDues(customerId: string) {
-  const customer = await Customer.findById(customerId);
-  if (!customer || !customer.isActive) throw new AppError('Customer not found', 404);
+export async function getCustomerDues(dealerId: string) {
+  const dealer = await Dealer.findById(dealerId);
+  if (!dealer || !dealer.isActive) throw new AppError('Dealer not found', 404);
 
   const now = new Date();
 
   const [invoices, payments] = await Promise.all([
-    Invoice.find({ customer: customerId, isActive: true, status: { $ne: 'CANCELLED' } })
+    Invoice.find({ dealer: dealerId, isActive: true, status: { $ne: 'CANCELLED' } })
       .populate('salesOrder', 'orderNumber')
       .sort({ createdAt: -1 })
-      .select('invoiceNumber totalAmount paidAmount dueAmount status dueDate salesOrder createdAt'),
-    CustomerPayment.find({ customer: customerId, isActive: true })
+      .select('invoiceNumber totalAmount paidAmount dueAmount status dueDate salesOrder createdAt commissionRate commissionAmount'),
+    CustomerPayment.find({ dealer: dealerId, isActive: true })
       .sort({ paymentDate: -1 })
       .select('receiptNumber amount paymentDate method reference'),
   ]);
 
-  // Aging buckets: current, 1-30, 31-60, 61-90, 90+
   const aging = { current: 0, days1_30: 0, days31_60: 0, days61_90: 0, over90: 0 };
   for (const inv of invoices) {
     if (inv.dueAmount <= 0) continue;
@@ -641,13 +645,14 @@ export async function getCustomerDues(customerId: string) {
   }
 
   return {
-    customer: { _id: customer._id, name: customer.name },
-    outstandingBalance: customer.balance,
+    dealer: { _id: dealer._id, name: dealer.name, commissionRate: dealer.commissionRate },
+    outstandingBalance: dealer.balance,
     aging,
     invoices,
     payments,
   };
 }
+
 export async function updateCustomerPayment(
   id: string,
   data: { amount?: number; paymentDate?: string; method?: string; reference?: string; notes?: string },
@@ -662,4 +667,3 @@ export async function updateCustomerPayment(
   if (data.notes !== undefined) update.notes = data.notes;
   return CustomerPayment.findByIdAndUpdate(id, update, { new: true, runValidators: true });
 }
-

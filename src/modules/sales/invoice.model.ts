@@ -15,7 +15,7 @@ export interface IInvoiceItem {
 export interface IInvoiceDocument extends Document {
   invoiceNumber: string;
   salesOrder?: Types.ObjectId;
-  customer: Types.ObjectId;
+  dealer: Types.ObjectId;
   status: InvoiceStatus;
   items: IInvoiceItem[];
   subtotal: number;
@@ -25,6 +25,8 @@ export interface IInvoiceDocument extends Document {
   totalAmount: number;
   paidAmount: number;
   dueAmount: number;
+  commissionRate: number;
+  commissionAmount: number;
   dueDate?: Date;
   notes?: string;
   isActive: boolean;
@@ -50,7 +52,7 @@ const invoiceSchema = new Schema<IInvoiceDocument>(
   {
     invoiceNumber: { type: String, required: true, unique: true, trim: true },
     salesOrder: { type: Schema.Types.ObjectId, ref: 'SalesOrder' },
-    customer: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
+    dealer: { type: Schema.Types.ObjectId, ref: 'Dealer', required: true },
     status: {
       type: String,
       enum: ['UNPAID', 'PARTIAL', 'PAID', 'CANCELLED'],
@@ -64,6 +66,8 @@ const invoiceSchema = new Schema<IInvoiceDocument>(
     totalAmount: { type: Number, required: true, min: 0 },
     paidAmount: { type: Number, default: 0, min: 0 },
     dueAmount: { type: Number, required: true, min: 0 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 25 },
+    commissionAmount: { type: Number, default: 0, min: 0 },
     dueDate: { type: Date },
     notes: { type: String, trim: true },
     isActive: { type: Boolean, default: true },
@@ -72,7 +76,7 @@ const invoiceSchema = new Schema<IInvoiceDocument>(
   { timestamps: true },
 );
 
-invoiceSchema.index({ customer: 1, status: 1 });
+invoiceSchema.index({ dealer: 1, status: 1 });
 invoiceSchema.index({ salesOrder: 1 });
 invoiceSchema.index({ invoiceNumber: 'text' });
 invoiceSchema.index({ createdAt: -1 });

@@ -8,7 +8,7 @@ import { PurchaseOrder } from '../procurement/purchaseOrder.model';
 import { GoodsReceipt } from '../procurement/goodsReceipt.model';
 import { Expense } from '../finance/expense.model';
 import { Supplier } from '../procurement/supplier.model';
-import { Customer } from '../sales/customer.model';
+import { Dealer } from '../sales/dealer.model';
 import { Employee } from '../hr/employee.model';
 import { Attendance } from '../hr/attendance.model';
 import { Payroll } from '../hr/payroll.model';
@@ -210,7 +210,7 @@ export async function getProductionSummary(query: { from?: string; to?: string }
 // ── T61 — Sales Report ────────────────────────────────────────────────────────
 
 export async function getSalesReport(query: {
-  customer?: string;
+  dealer?: string;
   status?: string;
   from?: string;
   to?: string;
@@ -221,14 +221,14 @@ export async function getSalesReport(query: {
   const skip = (page - 1) * limit;
 
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.customer) filter.customer = query.customer;
+  if (query.dealer) filter.dealer = query.dealer;
   if (query.status) filter.status = query.status;
   const df = dateFilter(query.from, query.to);
   if (df) filter.createdAt = df;
 
   const [items, total] = await Promise.all([
     SalesOrder.find(filter)
-      .populate('customer', 'name')
+      .populate('dealer', 'name')
       .populate('warehouse', 'name')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -243,7 +243,7 @@ export async function getSalesSummary(query: { from?: string; to?: string }) {
   const df = dateFilter(query.from, query.to);
   const matchStage = { isActive: true, ...(df ? { createdAt: df } : {}) };
 
-  const [orderSummary, invoiceSummary, topCustomers, topProducts] = await Promise.all([
+  const [orderSummary, invoiceSummary, topDealers, topProducts] = await Promise.all([
     SalesOrder.aggregate([
       { $match: matchStage },
       {
@@ -268,10 +268,10 @@ export async function getSalesSummary(query: { from?: string; to?: string }) {
     ]),
     Invoice.aggregate([
       { $match: { isActive: true, ...(df ? { createdAt: df } : {}) } },
-      { $group: { _id: '$customer', totalAmount: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
-      { $lookup: { from: 'customers', localField: '_id', foreignField: '_id', as: 'customer' } },
-      { $unwind: '$customer' },
-      { $project: { customerName: '$customer.name', totalAmount: 1, count: 1 } },
+      { $group: { _id: '$dealer', totalAmount: { $sum: '$totalAmount' }, count: { $sum: 1 } } },
+      { $lookup: { from: 'dealers', localField: '_id', foreignField: '_id', as: 'dealer' } },
+      { $unwind: '$dealer' },
+      { $project: { dealerName: '$dealer.name', totalAmount: 1, count: 1 } },
       { $sort: { totalAmount: -1 } },
       { $limit: 10 },
     ]),
@@ -293,7 +293,7 @@ export async function getSalesSummary(query: { from?: string; to?: string }) {
     ]),
   ]);
 
-  return { orderSummary, invoiceSummary, topCustomers, topProducts };
+  return { orderSummary, invoiceSummary, topDealers, topProducts };
 }
 
 // ── T62 — Purchase Report ─────────────────────────────────────────────────────
@@ -423,7 +423,7 @@ export async function getFinanceSummaryReport(query: { from?: string; to?: strin
       { $match: { isActive: true, balance: { $gt: 0 } } },
       { $group: { _id: null, total: { $sum: '$balance' }, count: { $sum: 1 } } },
     ]),
-    Customer.aggregate([
+    Dealer.aggregate([
       { $match: { isActive: true, balance: { $gt: 0 } } },
       { $group: { _id: null, total: { $sum: '$balance' }, count: { $sum: 1 } } },
     ]),

@@ -82,13 +82,13 @@ function solidLine(
 
 export async function generateInvoicePDF(invoiceId: string, res: Response): Promise<void> {
   const invoice = await Invoice.findById(invoiceId)
-    .populate('customer', 'name phone address')
+    .populate('dealer', 'name phone address')
     .populate('items.item', 'name')
     .lean();
 
   if (!invoice || !invoice.isActive) throw new AppError('Invoice not found', 404);
 
-  const customer = invoice.customer as unknown as {
+  const customer = invoice.dealer as unknown as {
     name: string; phone?: string; address?: string;
   };
 

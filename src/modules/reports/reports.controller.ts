@@ -116,7 +116,7 @@ export const getSalesReport = asyncHandler(async (req: Request, res: Response) =
   if (req.query.format === 'csv') {
     const rows = items.map((o) => ({
       OrderNumber: o.orderNumber,
-      Customer: (o.customer as unknown as { name: string })?.name ?? '',
+      Customer: (o.dealer as unknown as { name: string })?.name ?? '',
       Status: o.status,
       Subtotal: o.subtotal,
       Discount: o.discountAmount,

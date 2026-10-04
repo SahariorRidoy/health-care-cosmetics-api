@@ -10,10 +10,11 @@ const orderItemSchema = z.object({
 });
 
 export const createSalesOrderSchema = z.object({
-  customer: z.string().min(1, 'Customer is required'),
+  dealer: z.string().min(1, 'Dealer is required'),
   warehouse: z.string().min(1, 'Warehouse is required'),
   items: z.array(orderItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
+  commissionRate: z.number().min(0).max(25).default(0),
   notes: z.string().trim().optional(),
   payment: z.object({
     amount: z.number().positive(),
@@ -24,10 +25,11 @@ export const createSalesOrderSchema = z.object({
 });
 
 export const updateSalesOrderSchema = z.object({
-  customer: z.string().min(1).optional(),
+  dealer: z.string().min(1).optional(),
   warehouse: z.string().min(1).optional(),
   items: z.array(orderItemSchema).min(1).optional(),
   taxPercent: z.number().min(0).max(100).optional(),
+  commissionRate: z.number().min(0).max(25).optional(),
   notes: z.string().trim().optional(),
 });
 
@@ -42,10 +44,11 @@ const invoiceItemSchema = z.object({
 });
 
 export const createInvoiceSchema = z.object({
-  customer: z.string().min(1, 'Customer is required'),
+  dealer: z.string().min(1, 'Dealer is required'),
   salesOrder: z.string().optional(),
   items: z.array(invoiceItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
+  commissionRate: z.number().min(0).max(25).default(0),
   dueDate: z.string().optional(),
   notes: z.string().trim().optional(),
 });
@@ -57,9 +60,9 @@ export const updateInvoiceSchema = z.object({
   notes: z.string().trim().optional(),
 });
 
-// Customer payment
+// Dealer payment
 export const createCustomerPaymentSchema = z.object({
-  customer: z.string().min(1, 'Customer is required'),
+  dealer: z.string().min(1, 'Dealer is required'),
   invoice: z.string().min(1, 'Invoice is required'),
   amount: z.number().positive('Amount must be positive'),
   paymentDate: z.string().optional(),
