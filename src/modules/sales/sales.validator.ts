@@ -4,8 +4,9 @@ const orderItemSchema = z.object({
   item: z.string().min(1),
   description: z.string().trim().optional(),
   qty: z.number().positive(),
+  giftQty: z.number().min(0).default(0),
   unitPrice: z.number().min(0),
-  discount: z.number().min(0).max(100).default(0),
+  commissionRate: z.number().min(0).max(100).default(0),
   uom: z.string().min(1),
 });
 
@@ -14,7 +15,7 @@ export const createSalesOrderSchema = z.object({
   warehouse: z.string().min(1, 'Warehouse is required'),
   items: z.array(orderItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
-  commissionRate: z.number().min(0).max(25).default(0),
+  commissionRate: z.number().min(0).max(100).default(0),
   notes: z.string().trim().optional(),
   payment: z.object({
     amount: z.number().positive(),
@@ -25,11 +26,6 @@ export const createSalesOrderSchema = z.object({
 });
 
 export const updateSalesOrderSchema = z.object({
-  dealer: z.string().min(1).optional(),
-  warehouse: z.string().min(1).optional(),
-  items: z.array(orderItemSchema).min(1).optional(),
-  taxPercent: z.number().min(0).max(100).optional(),
-  commissionRate: z.number().min(0).max(25).optional(),
   notes: z.string().trim().optional(),
 });
 
@@ -38,8 +34,9 @@ const invoiceItemSchema = z.object({
   item: z.string().min(1),
   description: z.string().trim().optional(),
   qty: z.number().positive(),
+  giftQty: z.number().min(0).default(0),
   unitPrice: z.number().min(0),
-  discount: z.number().min(0).max(100).default(0),
+  commissionRate: z.number().min(0).max(100).default(0),
   uom: z.string().min(1),
 });
 
@@ -48,14 +45,12 @@ export const createInvoiceSchema = z.object({
   salesOrder: z.string().optional(),
   items: z.array(invoiceItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
-  commissionRate: z.number().min(0).max(25).default(0),
+  commissionRate: z.number().min(0).max(100).default(0),
   dueDate: z.string().optional(),
   notes: z.string().trim().optional(),
 });
 
 export const updateInvoiceSchema = z.object({
-  items: z.array(invoiceItemSchema).min(1).optional(),
-  taxPercent: z.number().min(0).max(100).optional(),
   dueDate: z.string().nullable().optional(),
   notes: z.string().trim().optional(),
 });

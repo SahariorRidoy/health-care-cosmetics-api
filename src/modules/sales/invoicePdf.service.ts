@@ -231,7 +231,7 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
 
   // ── Data rows ─────────────────────────────────────────────────────────────
   const items = invoice.items as Array<{
-    item: unknown; qty: number; unitPrice: number; lineTotal: number;
+    item: unknown; qty: number; giftQty?: number; unitPrice: number; lineTotal: number;
   }>;
 
   const TFS = 7.5;
@@ -240,8 +240,8 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
     const isLastRow = row === TOTAL_ROWS - 1;
     const bgColor   = row % 2 === 1 ? '#eeeeee' : '#ffffff';
 
-    fillRect(doc, ML, y, CW, ROW_H, bgColor);   // fill first — no stroke here
-    strokeRect(doc, ML, y, CW, ROW_H);           // outer row border
+    fillRect(doc, ML, y, CW, ROW_H, bgColor);
+    strokeRect(doc, ML, y, CW, ROW_H);
 
     cx = ML;
     for (let c = 0; c < COLS.length; c++) {
@@ -252,9 +252,10 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
     const item      = items[row];
     const itemName  = item?.item && typeof item.item === 'object'
       ? ((item.item as Record<string, unknown>).name as string) ?? '' : '';
-    const qty       = item ? fmtAmt(item.qty)      : '';
-    const unitPrice = item ? fmtAmt(item.unitPrice) : '';
-    const lineTotal = item ? fmtAmt(item.lineTotal) : '';
+    const qty       = item ? fmtAmt(item.qty)       : '';
+    const giftQty   = item && item.giftQty && item.giftQty > 0 ? fmtAmt(item.giftQty) : '';
+    const unitPrice = item ? fmtAmt(item.unitPrice)  : '';
+    const lineTotal = item ? fmtAmt(item.lineTotal)  : '';
     const textY     = y + 4;
 
     // Col 0 — serial
@@ -267,13 +268,17 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
         .text(itemName, ML + COLS[0] + 3, textY, { width: COLS[1] - 5, ellipsis: true });
     }
 
-    // Col 2 — quantity
+    // Col 2 — paid quantity
     if (qty) {
       doc.font('Regular').fontSize(TFS).fillColor('#000000')
         .text(qty, ML + COLS[0] + COLS[1] + 2, textY, { width: COLS[2] - 4, align: 'center' });
     }
 
-    // Col 3 — free/gift (blank)
+    // Col 3 — free/gift qty
+    if (giftQty) {
+      doc.font('Regular').fontSize(TFS).fillColor('#000000')
+        .text(giftQty, ML + COLS[0] + COLS[1] + COLS[2] + 2, textY, { width: COLS[3] - 4, align: 'center' });
+    }
 
     const col4X = ML + COLS[0] + COLS[1] + COLS[2] + COLS[3];
     const col5X = col4X + COLS[4];
@@ -284,10 +289,12 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
       doc.font('Bold').fontSize(TFS).fillColor('#000000')
         .text(fmtAmt(invoice.totalAmount), col5X + 2, textY, { width: COLS[5] - 4, align: 'right' });
     } else {
+      // Col 4 — TP Price (unit price before commission)
       if (unitPrice) {
         doc.font('Regular').fontSize(TFS).fillColor('#000000')
           .text(unitPrice, col4X + 2, textY, { width: COLS[4] - 4, align: 'right' });
       }
+      // Col 5 — টাকা (net line total after commission)
       if (lineTotal) {
         doc.font('Regular').fontSize(TFS).fillColor('#000000')
           .text(lineTotal, col5X + 2, textY, { width: COLS[5] - 4, align: 'right' });
@@ -307,7 +314,30 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
   doc.font('Regular').fontSize(8.5).fillColor('#000000')
     .text(words, ML + 90, y, { width: CW - 90 });
   dottedLine(doc, ML + 88, y + 11, ML + CW);
-  y += 26;
+  y += 20;
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 7b. PAID / DUE
+  // ══════════════════════════════════════════════════════════════════════════
+  const paidAmt = (invoice.paidAmount ?? 0);
+  const dueAmt  = (invoice.dueAmount  ?? 0);
+
+  const paidStr = paidAmt > 0 ? paidAmt.toLocaleString('en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '০.০০';
+  const dueStr  = dueAmt  > 0 ? dueAmt.toLocaleString('en-BD',  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '০.০০';
+
+  doc.font('Bold').fontSize(8.5).fillColor('#000000')
+    .text('পরিশোধিত টাকা ঃ', ML + CW - 160, y, { width: 100, align: 'right' });
+  doc.font('Regular').fontSize(8.5).fillColor('#000000')
+    .text(paidStr, ML + CW - 58, y, { width: 58, align: 'right' });
+  dottedLine(doc, ML + CW - 60, y + 11, ML + CW);
+  y += 14;
+
+  doc.font('Bold').fontSize(8.5).fillColor('#000000')
+    .text('বাকি টাকা ঃ', ML + CW - 160, y, { width: 100, align: 'right' });
+  doc.font('Regular').fontSize(8.5).fillColor('#000000')
+    .text(dueStr, ML + CW - 58, y, { width: 58, align: 'right' });
+  dottedLine(doc, ML + CW - 60, y + 11, ML + CW);
+  y += 36;
 
   // ══════════════════════════════════════════════════════════════════════════
   // 8. SIGNATURES

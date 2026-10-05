@@ -13,26 +13,44 @@ import { parsePagination, buildPagination } from '../../common/utils/response';
 
 function round2(n: number) { return Math.round(n * 100) / 100; }
 
-function calcOrderTotals(
-  items: { qty: number; unitPrice: number; discount: number }[],
-  taxPercent: number,
-) {
-  const subtotal = items.reduce((s, i) => s + round2(i.qty * i.unitPrice), 0);
-  const discountAmount = items.reduce(
-    (s, i) => s + round2(i.qty * i.unitPrice * (i.discount / 100)),
-    0,
-  );
-  const taxableAmount = subtotal - discountAmount;
-  const taxAmount = round2(taxableAmount * (taxPercent / 100));
-  const totalAmount = round2(taxableAmount + taxAmount);
-  return { subtotal: round2(subtotal), discountAmount: round2(discountAmount), taxAmount, totalAmount };
+interface RawItem {
+  item: string;
+  description?: string;
+  qty: number;
+  giftQty?: number;
+  unitPrice: number;
+  commissionRate: number;
+  uom: string;
 }
 
-function buildItems(rawItems: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[]) {
-  return rawItems.map((i) => ({
-    ...i,
-    lineTotal: round2(i.qty * i.unitPrice * (1 - i.discount / 100)),
-  }));
+function buildItems(rawItems: RawItem[]) {
+  return rawItems.map((i) => {
+    const commissionAmount = round2(i.qty * i.unitPrice * (i.commissionRate / 100));
+    const lineTotal = round2(i.qty * i.unitPrice - commissionAmount);
+    return {
+      item: i.item,
+      description: i.description,
+      qty: i.qty,
+      giftQty: i.giftQty ?? 0,
+      unitPrice: i.unitPrice,
+      commissionRate: i.commissionRate,
+      commissionAmount,
+      lineTotal,
+      uom: i.uom,
+    };
+  });
+}
+
+function calcTotals(
+  items: ReturnType<typeof buildItems>,
+  taxPercent: number,
+) {
+  const grossAmount = round2(items.reduce((s, i) => s + i.qty * i.unitPrice, 0));
+  const totalCommission = round2(items.reduce((s, i) => s + i.commissionAmount, 0));
+  const subtotal = round2(grossAmount - totalCommission);
+  const taxAmount = round2(subtotal * (taxPercent / 100));
+  const totalAmount = round2(subtotal + taxAmount);
+  return { grossAmount, totalCommission, subtotal, taxAmount, totalAmount };
 }
 
 async function generateOrderNumber(): Promise<string> {
@@ -119,7 +137,7 @@ export async function createSalesOrder(
   data: {
     dealer: string;
     warehouse: string;
-    items: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
+    items: RawItem[];
     taxPercent: number;
     commissionRate: number;
     notes?: string;
@@ -136,18 +154,15 @@ export async function createSalesOrder(
   if (!warehouse || !warehouse.isActive) throw new AppError('Warehouse not found', 404);
 
   const itemIds = data.items.map((i) => i.item);
-  const items = await Item.find({ _id: { $in: itemIds } }).select('type name');
-  const invalidItems = items.filter((i) => i.type !== 'FINISHED_GOOD');
+  const dbItems = await Item.find({ _id: { $in: itemIds } }).select('type name');
+  const invalidItems = dbItems.filter((i) => i.type !== 'FINISHED_GOOD');
   if (invalidItems.length > 0) {
-    const names = invalidItems.map((i) => i.name).join(', ');
-    throw new AppError(`Sales orders can only contain finished products. Invalid items: ${names}`, 400);
+    throw new AppError(`Sales orders can only contain finished products. Invalid items: ${invalidItems.map((i) => i.name).join(', ')}`, 400);
   }
 
   const orderNumber = await generateOrderNumber();
   const soItems = buildItems(data.items);
-  const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
-  const commissionAmount = round2(totalAmount * (data.commissionRate / 100));
-  const finalStatus: SalesOrderStatus = 'ACTIVE';
+  const { grossAmount, totalCommission, subtotal, taxAmount, totalAmount } = calcTotals(soItems, data.taxPercent);
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -157,20 +172,21 @@ export async function createSalesOrder(
       dealer: data.dealer,
       warehouse: data.warehouse,
       items: soItems,
+      grossAmount,
+      totalCommission,
       subtotal,
-      discountAmount,
       taxPercent: data.taxPercent,
       taxAmount,
       totalAmount,
       commissionRate: data.commissionRate,
-      commissionAmount,
+      commissionAmount: totalCommission,
       notes: data.notes,
-      status: finalStatus,
+      status: 'ACTIVE',
       deliveryDate: new Date(),
       createdBy,
     }], { session });
 
-    // Deduct stock immediately on sale
+    // Deduct paid qty stock
     for (const item of soItems) {
       await postMovement({
         type: 'SALES_DISPATCH',
@@ -184,6 +200,21 @@ export async function createSalesOrder(
         createdBy,
         session,
       });
+      // Deduct gift qty stock separately
+      if (item.giftQty > 0) {
+        await postMovement({
+          type: 'GIFT_DISPATCH',
+          item: item.item,
+          warehouse: data.warehouse,
+          quantity: -item.giftQty,
+          reference: orderNumber,
+          referenceModel: 'SalesOrder',
+          referenceId: order._id as unknown as string,
+          notes: `Gift ${orderNumber}`,
+          createdBy,
+          session,
+        });
+      }
     }
 
     // Auto-create invoice
@@ -193,24 +224,24 @@ export async function createSalesOrder(
       dealer: data.dealer,
       salesOrder: order._id,
       items: soItems,
+      grossAmount,
+      totalCommission,
       subtotal,
-      discountAmount,
       taxPercent: data.taxPercent,
       taxAmount,
       totalAmount,
       paidAmount: 0,
       dueAmount: totalAmount,
       commissionRate: data.commissionRate,
-      commissionAmount,
+      commissionAmount: totalCommission,
       createdBy,
     }], { session });
     await Dealer.findByIdAndUpdate(data.dealer, { $inc: { balance: totalAmount } }, { session });
 
-    // Auto-record payment if provided
-    if (data.payment) {
+    if (data.payment && data.payment.amount > 0) {
       const payAmt = data.payment.amount;
-      const changeAmount = round2(Math.max(0, payAmt - totalAmount));
       const appliedAmt = round2(Math.min(payAmt, totalAmount));
+      const changeAmount = round2(Math.max(0, payAmt - totalAmount));
       const newDue = round2(Math.max(0, totalAmount - appliedAmt));
       const invoiceStatus = appliedAmt >= totalAmount ? 'PAID' : 'PARTIAL';
       const receiptNumber = await generateReceiptNumber();
@@ -375,7 +406,7 @@ export async function createInvoice(
   data: {
     dealer: string;
     salesOrder?: string;
-    items: { item: string; description?: string; qty: number; unitPrice: number; discount: number; uom: string }[];
+    items: RawItem[];
     taxPercent: number;
     commissionRate: number;
     dueDate?: string;
@@ -388,8 +419,7 @@ export async function createInvoice(
 
   const invoiceNumber = await generateInvoiceNumber();
   const items = buildItems(data.items);
-  const { subtotal, discountAmount, taxAmount, totalAmount } = calcOrderTotals(data.items, data.taxPercent);
-  const commissionAmount = round2(totalAmount * (data.commissionRate / 100));
+  const { grossAmount, totalCommission, subtotal, taxAmount, totalAmount } = calcTotals(items, data.taxPercent);
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -400,15 +430,16 @@ export async function createInvoice(
         dealer: data.dealer,
         salesOrder: data.salesOrder,
         items,
+        grossAmount,
+        totalCommission,
         subtotal,
-        discountAmount,
         taxPercent: data.taxPercent,
         taxAmount,
         totalAmount,
         paidAmount: 0,
         dueAmount: totalAmount,
         commissionRate: data.commissionRate,
-        commissionAmount,
+        commissionAmount: totalCommission,
         dueDate: data.dueDate,
         notes: data.notes,
         createdBy,
@@ -626,7 +657,7 @@ export async function getCustomerDues(dealerId: string) {
     Invoice.find({ dealer: dealerId, isActive: true, status: { $ne: 'CANCELLED' } })
       .populate('salesOrder', 'orderNumber')
       .sort({ createdAt: -1 })
-      .select('invoiceNumber totalAmount paidAmount dueAmount status dueDate salesOrder createdAt commissionRate commissionAmount'),
+      .select('invoiceNumber grossAmount totalCommission totalAmount paidAmount dueAmount status dueDate salesOrder createdAt commissionRate commissionAmount'),
     CustomerPayment.find({ dealer: dealerId, isActive: true })
       .sort({ paymentDate: -1 })
       .select('receiptNumber amount paymentDate method reference'),
@@ -644,9 +675,16 @@ export async function getCustomerDues(dealerId: string) {
     else aging.over90 += inv.dueAmount;
   }
 
+  const totalGrossAmount = invoices.reduce((s, inv) => s + (inv.grossAmount ?? inv.totalAmount), 0);
+  const totalCommission = invoices.reduce((s, inv) => s + (inv.totalCommission ?? inv.commissionAmount), 0);
+  const totalNetAmount = invoices.reduce((s, inv) => s + inv.totalAmount, 0);
+
   return {
     dealer: { _id: dealer._id, name: dealer.name, commissionRate: dealer.commissionRate },
     outstandingBalance: dealer.balance,
+    totalGrossAmount,
+    totalCommission,
+    totalNetAmount,
     aging,
     invoices,
     payments,

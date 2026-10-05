@@ -5,6 +5,7 @@ export type MovementType =
   | 'PRODUCTION_ISSUE'
   | 'PRODUCTION_OUTPUT'
   | 'SALES_DISPATCH'
+  | 'GIFT_DISPATCH'
   | 'ADJUSTMENT'
   | 'TRANSFER'
   | 'RETURN_SUPPLIER'
@@ -36,7 +37,7 @@ const stockMovementSchema = new Schema<IStockMovementDocument>(
       type: String,
       required: true,
       enum: ['PURCHASE_RECEIPT', 'PRODUCTION_ISSUE', 'PRODUCTION_OUTPUT', 'SALES_DISPATCH',
-             'ADJUSTMENT', 'TRANSFER', 'RETURN_SUPPLIER', 'RETURN_CUSTOMER',
+             'GIFT_DISPATCH', 'ADJUSTMENT', 'TRANSFER', 'RETURN_SUPPLIER', 'RETURN_CUSTOMER',
              'FACTORY_DISPATCH', 'FACTORY_RECEIPT', 'FACTORY_RETURN', 'ITEM_DELETED'],
     },
     item: { type: Schema.Types.ObjectId, ref: 'Item', required: true },

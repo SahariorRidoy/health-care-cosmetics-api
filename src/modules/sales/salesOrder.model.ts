@@ -6,9 +6,11 @@ export interface ISalesOrderItem {
   item: Types.ObjectId;
   description?: string;
   qty: number;
+  giftQty: number;
   unitPrice: number;
-  discount: number;       // percentage 0–100
-  lineTotal: number;      // server-calculated: qty * unitPrice * (1 - discount/100)
+  commissionRate: number;   // snapshot per line
+  commissionAmount: number; // qty * unitPrice * commissionRate/100
+  lineTotal: number;        // qty * unitPrice * (1 - commissionRate/100)
   uom: Types.ObjectId;
 }
 
@@ -17,13 +19,14 @@ export interface ISalesOrderDocument extends Document {
   dealer: Types.ObjectId;
   status: SalesOrderStatus;
   items: ISalesOrderItem[];
-  subtotal: number;
-  discountAmount: number;
+  grossAmount: number;      // sum of qty * unitPrice (before commission)
+  totalCommission: number;  // sum of commissionAmount per line
+  subtotal: number;         // net amount dealer pays (grossAmount - totalCommission)
   taxPercent: number;
   taxAmount: number;
-  totalAmount: number;
-  commissionRate: number;   // 0–25 %
-  commissionAmount: number; // calculated
+  totalAmount: number;      // subtotal + tax
+  commissionRate: number;   // invoice-level default (kept for backward compat)
+  commissionAmount: number; // = totalCommission
   notes?: string;
   deliveryDate?: Date;
   warehouse: Types.ObjectId;
@@ -38,8 +41,10 @@ const soItemSchema = new Schema<ISalesOrderItem>(
     item: { type: Schema.Types.ObjectId, ref: 'Item', required: true },
     description: { type: String, trim: true },
     qty: { type: Number, required: true, min: 0.001 },
+    giftQty: { type: Number, default: 0, min: 0 },
     unitPrice: { type: Number, required: true, min: 0 },
-    discount: { type: Number, default: 0, min: 0, max: 100 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 100 },
+    commissionAmount: { type: Number, default: 0, min: 0 },
     lineTotal: { type: Number, required: true, min: 0 },
     uom: { type: Schema.Types.ObjectId, ref: 'UOM', required: true },
   },
@@ -50,18 +55,15 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
   {
     orderNumber: { type: String, required: true, unique: true, trim: true },
     dealer: { type: Schema.Types.ObjectId, ref: 'Dealer', required: true },
-    status: {
-      type: String,
-      enum: ['ACTIVE', 'CANCELLED'],
-      default: 'ACTIVE',
-    },
+    status: { type: String, enum: ['ACTIVE', 'CANCELLED'], default: 'ACTIVE' },
     items: { type: [soItemSchema], required: true },
+    grossAmount: { type: Number, required: true, min: 0 },
+    totalCommission: { type: Number, default: 0, min: 0 },
     subtotal: { type: Number, required: true, min: 0 },
-    discountAmount: { type: Number, default: 0, min: 0 },
     taxPercent: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },
-    commissionRate: { type: Number, default: 0, min: 0, max: 25 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 100 },
     commissionAmount: { type: Number, default: 0, min: 0 },
     notes: { type: String, trim: true },
     deliveryDate: { type: Date },

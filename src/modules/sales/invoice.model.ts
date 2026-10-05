@@ -6,8 +6,10 @@ export interface IInvoiceItem {
   item: Types.ObjectId;
   description?: string;
   qty: number;
+  giftQty: number;
   unitPrice: number;
-  discount: number;
+  commissionRate: number;
+  commissionAmount: number;
   lineTotal: number;
   uom: Types.ObjectId;
 }
@@ -18,8 +20,9 @@ export interface IInvoiceDocument extends Document {
   dealer: Types.ObjectId;
   status: InvoiceStatus;
   items: IInvoiceItem[];
+  grossAmount: number;
+  totalCommission: number;
   subtotal: number;
-  discountAmount: number;
   taxPercent: number;
   taxAmount: number;
   totalAmount: number;
@@ -40,8 +43,10 @@ const invoiceItemSchema = new Schema<IInvoiceItem>(
     item: { type: Schema.Types.ObjectId, ref: 'Item', required: true },
     description: { type: String, trim: true },
     qty: { type: Number, required: true, min: 0.001 },
+    giftQty: { type: Number, default: 0, min: 0 },
     unitPrice: { type: Number, required: true, min: 0 },
-    discount: { type: Number, default: 0, min: 0, max: 100 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 100 },
+    commissionAmount: { type: Number, default: 0, min: 0 },
     lineTotal: { type: Number, required: true, min: 0 },
     uom: { type: Schema.Types.ObjectId, ref: 'UOM', required: true },
   },
@@ -53,20 +58,17 @@ const invoiceSchema = new Schema<IInvoiceDocument>(
     invoiceNumber: { type: String, required: true, unique: true, trim: true },
     salesOrder: { type: Schema.Types.ObjectId, ref: 'SalesOrder' },
     dealer: { type: Schema.Types.ObjectId, ref: 'Dealer', required: true },
-    status: {
-      type: String,
-      enum: ['UNPAID', 'PARTIAL', 'PAID', 'CANCELLED'],
-      default: 'UNPAID',
-    },
+    status: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID', 'CANCELLED'], default: 'UNPAID' },
     items: { type: [invoiceItemSchema], required: true },
+    grossAmount: { type: Number, required: true, min: 0 },
+    totalCommission: { type: Number, default: 0, min: 0 },
     subtotal: { type: Number, required: true, min: 0 },
-    discountAmount: { type: Number, default: 0, min: 0 },
     taxPercent: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },
     paidAmount: { type: Number, default: 0, min: 0 },
     dueAmount: { type: Number, required: true, min: 0 },
-    commissionRate: { type: Number, default: 0, min: 0, max: 25 },
+    commissionRate: { type: Number, default: 0, min: 0, max: 100 },
     commissionAmount: { type: Number, default: 0, min: 0 },
     dueDate: { type: Date },
     notes: { type: String, trim: true },

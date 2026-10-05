@@ -119,7 +119,7 @@ export const getSalesReport = asyncHandler(async (req: Request, res: Response) =
       Customer: (o.dealer as unknown as { name: string })?.name ?? '',
       Status: o.status,
       Subtotal: o.subtotal,
-      Discount: o.discountAmount,
+      Discount: o.totalCommission,
       Tax: o.taxAmount,
       Total: o.totalAmount,
       Date: o.createdAt.toISOString().split('T')[0],
