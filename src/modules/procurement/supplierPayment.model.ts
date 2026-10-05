@@ -4,6 +4,7 @@ export interface ISupplierPaymentDocument extends Document {
   paymentNumber: string;
   supplier: Types.ObjectId;
   purchaseOrder?: Types.ObjectId;
+  purchaseOrders: { purchaseOrder: Types.ObjectId; appliedAmount: number }[];
   amount: number;
   paymentDate: Date;
   method: string;
@@ -20,6 +21,12 @@ const supplierPaymentSchema = new Schema<ISupplierPaymentDocument>(
     paymentNumber: { type: String, required: true, unique: true, trim: true },
     supplier: { type: Schema.Types.ObjectId, ref: 'Supplier', required: true },
     purchaseOrder: { type: Schema.Types.ObjectId, ref: 'PurchaseOrder' },
+    purchaseOrders: [
+      {
+        purchaseOrder: { type: Schema.Types.ObjectId, ref: 'PurchaseOrder', required: true },
+        appliedAmount: { type: Number, required: true, min: 0 },
+      },
+    ],
     amount: { type: Number, required: true, min: 0.01 },
     paymentDate: { type: Date, default: Date.now },
     method: { type: String, required: true, trim: true },

@@ -184,6 +184,9 @@ export async function deleteGoodsReceipt(id: string) {
   const po = await PurchaseOrder.findById(gr.purchaseOrder);
   if (po && po.isActive) throw new AppError('Cannot delete a receipt that belongs to an active purchase order. Delete the purchase order instead.', 400);
 
+  // Reverse the supplier balance for this receipt
+  await Supplier.findByIdAndUpdate(gr.supplier, { $inc: { balance: -gr.totalAmount } });
+
   gr.isActive = false;
   return gr.save();
 }
@@ -270,6 +273,7 @@ export async function getSupplierPayments(supplierId: string, query: Record<stri
   const [payments, total] = await Promise.all([
     SupplierPayment.find({ supplier: supplierId, isActive: true })
       .populate('purchaseOrder', 'poNumber')
+      .populate('purchaseOrders.purchaseOrder', 'poNumber')
       .sort({ paymentDate: -1 })
       .skip(skip)
       .limit(limit),
@@ -277,6 +281,161 @@ export async function getSupplierPayments(supplierId: string, query: Record<stri
   ]);
 
   return { payments, pagination: buildPagination(page, limit, total) };
+}
+
+export async function getAllSupplierPayments(query: Record<string, unknown>) {
+  const { page, limit, skip } = parsePagination(query);
+
+  const filter: Record<string, unknown> = { isActive: true };
+  if (query.supplier) filter.supplier = query.supplier;
+  if (query.method) filter.method = query.method;
+  if (query.search) {
+    filter.$or = [{ paymentNumber: { $regex: String(query.search), $options: 'i' } }];
+  }
+
+  const [payments, total] = await Promise.all([
+    SupplierPayment.find(filter)
+      .populate('supplier', 'name')
+      .populate('purchaseOrder', 'poNumber')
+      .populate('purchaseOrders.purchaseOrder', 'poNumber')
+      .sort({ paymentDate: -1 })
+      .skip(skip)
+      .limit(limit),
+    SupplierPayment.countDocuments(filter),
+  ]);
+
+  return { payments, pagination: buildPagination(page, limit, total) };
+}
+
+export async function getSupplierPaymentById(id: string) {
+  const payment = await SupplierPayment.findById(id)
+    .populate('supplier', 'name contactPerson phone email address')
+    .populate('purchaseOrder', 'poNumber totalAmount paidAmount paymentStatus')
+    .populate('purchaseOrders.purchaseOrder', 'poNumber totalAmount paidAmount paymentStatus createdAt')
+    .populate('createdBy', 'name');
+  if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
+  return payment;
+}
+
+// ── Supplier Payment FIFO ────────────────────────────────────────────────────
+
+export async function createSupplierPaymentFIFO(data: {
+  supplier: string;
+  amount: number;
+  paymentDate?: string;
+  method: string;
+  reference?: string;
+  notes?: string;
+}, createdBy: string) {
+  const supplier = await Supplier.findById(data.supplier);
+  if (!supplier || !supplier.isActive) throw new AppError('Supplier not found', 404);
+
+  // Get all unpaid/partial POs sorted oldest first (FIFO)
+  const unpaidPOs = await PurchaseOrder.find({
+    supplier: data.supplier,
+    isActive: true,
+    paymentStatus: { $in: ['UNPAID', 'PARTIAL'] },
+  }).sort({ createdAt: 1 });
+
+  if (unpaidPOs.length === 0) throw new AppError('No outstanding purchase orders found for this supplier', 400);
+
+  const paymentNumber = await generatePaymentNumber();
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    let remaining = data.amount;
+    const breakdown: { purchaseOrder: string; appliedAmount: number }[] = [];
+
+    for (const po of unpaidPOs) {
+      if (remaining <= 0) break;
+      const due = Math.max(0, po.totalAmount - (po.paidAmount ?? 0));
+      if (due <= 0) continue;
+
+      const applying = Math.min(remaining, due);
+      const newPaid = Math.round(((po.paidAmount ?? 0) + applying) * 100) / 100;
+      const paymentStatus = newPaid >= po.totalAmount ? 'PAID' : 'PARTIAL';
+
+      await PurchaseOrder.findByIdAndUpdate(
+        po._id,
+        { paidAmount: newPaid, paymentStatus },
+        { session },
+      );
+      breakdown.push({ purchaseOrder: String(po._id), appliedAmount: applying });
+      remaining = Math.round((remaining - applying) * 100) / 100;
+    }
+
+    const [payment] = await SupplierPayment.create(
+      [{
+        paymentNumber,
+        supplier: data.supplier,
+        purchaseOrders: breakdown,
+        amount: data.amount,
+        paymentDate: data.paymentDate ?? new Date(),
+        method: data.method,
+        reference: data.reference,
+        notes: data.notes,
+        createdBy,
+      }],
+      { session },
+    );
+
+    await Supplier.findByIdAndUpdate(
+      data.supplier,
+      { $inc: { balance: -data.amount } },
+      { session },
+    );
+
+    await session.commitTransaction();
+    return payment;
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+}
+
+export async function deleteSupplierPayment(id: string) {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const payment = await SupplierPayment.findById(id).session(session);
+    if (!payment || !payment.isActive) throw new AppError('Payment not found', 404);
+
+    // Reverse supplier balance
+    await Supplier.findByIdAndUpdate(payment.supplier, { $inc: { balance: payment.amount } }, { session });
+
+    // Reverse single PO paidAmount
+    if (payment.purchaseOrder) {
+      const po = await PurchaseOrder.findById(payment.purchaseOrder).session(session);
+      if (po) {
+        const newPaid = Math.max(0, Math.round(((po.paidAmount ?? 0) - payment.amount) * 100) / 100);
+        const paymentStatus = newPaid <= 0 ? 'UNPAID' : newPaid >= po.totalAmount ? 'PAID' : 'PARTIAL';
+        await PurchaseOrder.findByIdAndUpdate(payment.purchaseOrder, { paidAmount: newPaid, paymentStatus }, { session });
+      }
+    }
+
+    // Reverse FIFO POs
+    for (const line of payment.purchaseOrders ?? []) {
+      const po = await PurchaseOrder.findById(line.purchaseOrder).session(session);
+      if (po) {
+        const newPaid = Math.max(0, Math.round(((po.paidAmount ?? 0) - line.appliedAmount) * 100) / 100);
+        const paymentStatus = newPaid <= 0 ? 'UNPAID' : newPaid >= po.totalAmount ? 'PAID' : 'PARTIAL';
+        await PurchaseOrder.findByIdAndUpdate(line.purchaseOrder, { paidAmount: newPaid, paymentStatus }, { session });
+      }
+    }
+
+    payment.isActive = false;
+    await payment.save({ session });
+
+    await session.commitTransaction();
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }
 
 // ── Supplier Dues ─────────────────────────────────────────────────────────────

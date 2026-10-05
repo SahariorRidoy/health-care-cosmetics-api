@@ -36,35 +36,33 @@ export async function getStockBalanceReport(query: {
   const { page, limit } = query;
   const skip = (page - 1) * limit;
 
-  const filter: Record<string, unknown> = {};
+  const filter: Record<string, unknown> = { quantity: { $gt: 0 } };
   if (query.item) filter.item = query.item;
   if (query.warehouse) filter.warehouse = query.warehouse;
 
-  const [balances, total] = await Promise.all([
-    StockBalance.find(filter)
-      .populate('item', 'name sku type category reorderLevel costPrice')
-      .populate('warehouse', 'name')
-      .sort({ quantity: 1 })
-      .skip(skip)
-      .limit(limit),
-    StockBalance.countDocuments(filter),
-  ]);
+  const allBalances = await StockBalance.find(filter)
+    .populate({ path: 'item', select: 'name sku type category reorderLevel costPrice', match: { isActive: true } })
+    .populate('warehouse', 'name')
+    .sort({ quantity: 1 });
 
-  const rows = balances.map((b) => {
-    const item = b.item as unknown as {
-      name: string; sku: string; type: string; category: string;
-      reorderLevel: number; costPrice: number;
-    };
-    return {
-      ...b.toObject(),
-      isLowStock: item?.reorderLevel !== undefined && b.quantity <= item.reorderLevel,
-      valuation: item?.costPrice ? b.quantity * item.costPrice : 0,
-    };
-  });
+  const rows = allBalances
+    .filter((b) => b.item != null)
+    .map((b) => {
+      const item = b.item as unknown as {
+        name: string; sku: string; type: string; category: string;
+        reorderLevel: number; costPrice: number;
+      };
+      return {
+        ...b.toObject(),
+        isLowStock: item?.reorderLevel !== undefined && b.quantity <= item.reorderLevel,
+        valuation: item?.costPrice ? b.quantity * item.costPrice : 0,
+      };
+    });
 
   const filtered = query.lowStock ? rows.filter((r) => r.isLowStock) : rows;
+  const total = filtered.length;
 
-  return { items: filtered, pagination: buildPagination(page, limit, total) };
+  return { items: filtered.slice(skip, skip + limit), pagination: buildPagination(page, limit, total) };
 }
 
 export async function getStockMovementReport(query: {
@@ -106,16 +104,21 @@ export async function getLowStockItems() {
 }
 
 export async function getStockValuation(query: { warehouse?: string }) {
-  const balances = await StockBalance.find(query.warehouse ? { warehouse: query.warehouse } : {})
-    .populate('item', 'name sku costPrice type category');
+  const filter: Record<string, unknown> = { quantity: { $gt: 0 } };
+  if (query.warehouse) filter.warehouse = query.warehouse;
+
+  const balances = await StockBalance.find(filter)
+    .populate({ path: 'item', select: 'name sku costPrice type category', match: { isActive: true } });
 
   let totalValue = 0;
-  const rows = balances.map((b) => {
-    const item = b.item as unknown as { name: string; sku: string; costPrice: number; type: string; category: string };
-    const value = (item?.costPrice ?? 0) * b.quantity;
-    totalValue += value;
-    return { item: item?.name, sku: item?.sku, type: item?.type, category: item?.category, quantity: b.quantity, costPrice: item?.costPrice ?? 0, value };
-  });
+  const rows = balances
+    .filter((b) => b.item != null)
+    .map((b) => {
+      const item = b.item as unknown as { name: string; sku: string; costPrice: number; type: string; category: string };
+      const value = (item?.costPrice ?? 0) * b.quantity;
+      totalValue += value;
+      return { item: item?.name, sku: item?.sku, type: item?.type, category: item?.category, quantity: b.quantity, costPrice: item?.costPrice ?? 0, value };
+    });
 
   return { rows, totalValue };
 }

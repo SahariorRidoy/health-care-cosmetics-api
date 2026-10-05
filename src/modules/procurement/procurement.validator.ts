@@ -30,3 +30,12 @@ export const createSupplierPaymentSchema = z.object({
   reference: z.string().trim().optional(),
   notes: z.string().trim().optional(),
 });
+
+export const createSupplierPaymentFIFOSchema = z.object({
+  supplier: z.string().min(1, 'Supplier is required'),
+  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  paymentDate: z.string().datetime().optional(),
+  method: z.string().min(1, 'Payment method is required').trim(),
+  reference: z.string().trim().optional(),
+  notes: z.string().trim().optional(),
+});

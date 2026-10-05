@@ -85,25 +85,31 @@ export async function postMovement(input: PostMovementInput) {
 export async function getStockBalances(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);
   const lowStock = query.lowStock === 'true';
+  const archived = query.archived === 'true';
 
   const filter: Record<string, unknown> = {};
   if (query.item) filter.item = query.item;
   if (query.warehouse) filter.warehouse = query.warehouse;
   if (query.search) {
     const regex = { $regex: String(query.search), $options: 'i' };
-    const matchedItems = await Item.find({ $or: [{ name: regex }, { sku: regex }], isActive: true }).select('_id');
+    const isActiveFilter = archived ? false : true;
+    const matchedItems = await Item.find({ $or: [{ name: regex }, { sku: regex }], isActive: isActiveFilter }).select('_id');
     filter.item = { $in: matchedItems.map((i) => i._id) };
   }
 
+  const itemMatch = archived ? { isActive: false } : { isActive: true };
+
   const allBalances = await StockBalance.find(filter)
-    .populate({ path: 'item', select: 'name sku type category reorderLevel isActive', match: { isActive: true } })
+    .populate({ path: 'item', select: 'name sku type category reorderLevel isActive baseUom', match: itemMatch, populate: { path: 'baseUom', select: 'symbol' } })
     .populate('warehouse', 'name code')
     .sort({ updatedAt: -1 });
 
-  // Filter out soft-deleted items
-  let result = allBalances.filter((b) => b.item != null);
+  // For active: only items with stock > 0; for archived: items with quantity = 0 (deleted)
+  let result = allBalances.filter((b) => {
+    if (b.item == null) return false;
+    return archived ? b.quantity === 0 : b.quantity > 0;
+  });
 
-  // Apply low-stock filter after population
   if (lowStock) {
     result = result.filter((b) => {
       const item = b.item as unknown as { reorderLevel?: number };
@@ -126,8 +132,13 @@ export async function getStockMovements(query: Record<string, unknown>) {
   if (query.type) filter.type = query.type;
   if (query.reference) filter.reference = query.reference;
 
-  if (query.activeOnly === 'true') {
-    const activeItems = await Item.find({ isActive: true }).select('_id');
+  const archived = query.archived === 'true';
+  if (archived) {
+    const deletedItems = await Item.find({ isActive: false }).select('_id');
+    filter.item = { $in: deletedItems.map((i) => i._id) };
+  } else {
+    // Default: only show movements for active items with current stock > 0
+    const activeItems = await Item.find({ isActive: true, currentStock: { $gt: 0 } }).select('_id');
     filter.item = { $in: activeItems.map((i) => i._id) };
   }
 

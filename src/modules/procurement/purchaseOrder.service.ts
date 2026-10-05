@@ -187,6 +187,13 @@ export async function updatePOStatus(id: string, newStatus: POStatus) {
 export async function deletePurchaseOrder(id: string) {
   const po = await PurchaseOrder.findById(id);
   if (!po || !po.isActive) throw new AppError('Purchase order not found', 404);
+
+  // Reverse the outstanding balance on the supplier
+  const outstanding = Math.round(Math.max(0, po.totalAmount - (po.paidAmount ?? 0)) * 100) / 100;
+  if (outstanding > 0) {
+    await Supplier.findByIdAndUpdate(po.supplier, { $inc: { balance: -outstanding } });
+  }
+
   await GoodsReceipt.updateMany({ purchaseOrder: id }, { isActive: false });
   po.isActive = false;
   return po.save();

@@ -603,10 +603,64 @@ export async function cancelFactoryBatch(id: string, createdBy: string) {
   return getFactoryBatchById(id);
 }
 
-export async function deleteFactoryBatch(id: string) {
+export async function deleteFactoryBatch(id: string, createdBy: string) {
   const batch = await FactoryBatch.findById(id);
   if (!batch || !batch.isActive) throw new AppError('Factory batch not found', 404);
-  if (batch.status !== 'DRAFT') throw new AppError('Only DRAFT batches can be deleted', 400);
-  batch.isActive = false;
-  return batch.save();
+
+  // For DRAFT: simple soft-delete, no stock movements needed
+  if (batch.status === 'DRAFT') {
+    batch.isActive = false;
+    return batch.save();
+  }
+
+  // For any dispatched status: calculate remaining factory stock per material and restock
+  const remainingMap: Record<string, number> = {};
+
+  for (const mat of batch.dispatch.materials) {
+    const key = String(mat.item);
+    remainingMap[key] = (remainingMap[key] ?? 0) + mat.dispatchedQty;
+  }
+  for (const receipt of batch.receipts) {
+    for (const product of receipt.products) {
+      for (const mu of product.materialsUsed) {
+        const key = String(mu.item);
+        remainingMap[key] = (remainingMap[key] ?? 0) - mu.usedQty;
+      }
+    }
+  }
+  for (const ret of batch.materialReturns) {
+    for (const mat of ret.materials) {
+      const key = String(mat.item);
+      remainingMap[key] = (remainingMap[key] ?? 0) - mat.returnedQty;
+    }
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    for (const [itemId, remaining] of Object.entries(remainingMap)) {
+      if (remaining > 0) {
+        await postMovement({
+          type: 'FACTORY_RETURN',
+          item: itemId,
+          warehouse: String(batch.warehouse),
+          quantity: remaining,
+          reference: batch.fbNumber,
+          referenceModel: 'FactoryBatch',
+          referenceId: String(batch._id),
+          notes: `Batch deletion restock — ${batch.fbNumber}`,
+          createdBy,
+          session,
+        });
+      }
+    }
+    batch.isActive = false;
+    await batch.save({ session });
+    await session.commitTransaction();
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
 }

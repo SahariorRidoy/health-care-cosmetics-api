@@ -1,7 +1,7 @@
 import { ExpenseCategory } from './expenseCategory.model';
 import { Expense, ExpenseStatus } from './expense.model';
-import { Supplier } from '../procurement/supplier.model';
-import { Customer } from '../sales/customer.model';
+import { PurchaseOrder } from '../procurement/purchaseOrder.model';
+import { Invoice } from '../sales/invoice.model';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
 
@@ -151,7 +151,7 @@ export async function getFinanceSummary(query: { from?: string; to?: string }) {
     ? { expenseDate: dateFilter }
     : {};
 
-  const [expenseAgg, expenseByCategory, payablesAgg, receivablesAgg] = await Promise.all([
+  const [expenseAgg, expenseByCategory, payablesAgg, commissionAgg, receivablesAgg] = await Promise.all([
     Expense.aggregate([
       { $match: { isActive: true, ...expenseDateFilter } },
       { $group: { _id: '$status', total: { $sum: '$amount' }, count: { $sum: 1 } } },
@@ -171,13 +171,41 @@ export async function getFinanceSummary(query: { from?: string; to?: string }) {
       { $project: { categoryName: '$category.name', total: 1, count: 1 } },
       { $sort: { total: -1 } },
     ]),
-    Supplier.aggregate([
-      { $match: { isActive: true, balance: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$balance' }, count: { $sum: 1 } } },
+    PurchaseOrder.aggregate([
+      {
+        $match: {
+          isActive: true,
+          paymentStatus: { $in: ['UNPAID', 'PARTIAL'] },
+          ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $subtract: ['$totalAmount', '$paidAmount'] } },
+          count: { $addToSet: '$supplier' },
+        },
+      },
     ]),
-    Customer.aggregate([
-      { $match: { isActive: true, balance: { $gt: 0 } } },
-      { $group: { _id: null, total: { $sum: '$balance' }, count: { $sum: 1 } } },
+    Invoice.aggregate([
+      {
+        $match: {
+          isActive: true,
+          status: { $ne: 'CANCELLED' },
+          ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$commissionAmount' }, dealerCount: { $addToSet: '$dealer' } } },
+    ]),
+    Invoice.aggregate([
+      {
+        $match: {
+          isActive: true,
+          status: { $in: ['UNPAID', 'PARTIAL'] },
+          ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$dueAmount' }, customerCount: { $addToSet: '$dealer' } } },
     ]),
   ]);
 
@@ -194,11 +222,15 @@ export async function getFinanceSummary(query: { from?: string; to?: string }) {
     },
     payables: {
       total: payablesAgg[0]?.total ?? 0,
-      supplierCount: payablesAgg[0]?.count ?? 0,
+      supplierCount: payablesAgg[0]?.count?.length ?? 0,
+    },
+    commission: {
+      total: commissionAgg[0]?.total ?? 0,
+      dealerCount: commissionAgg[0]?.dealerCount?.length ?? 0,
     },
     receivables: {
       total: receivablesAgg[0]?.total ?? 0,
-      customerCount: receivablesAgg[0]?.count ?? 0,
+      customerCount: receivablesAgg[0]?.customerCount?.length ?? 0,
     },
     period: {
       from: query.from ?? null,

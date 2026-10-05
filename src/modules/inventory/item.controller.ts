@@ -53,6 +53,6 @@ export const repurchaseItem = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const deleteItem = asyncHandler(async (req: Request, res: Response) => {
-  await itemService.deleteItem(req.params.id);
+  await itemService.deleteItem(req.params.id, (req as AuthRequest).user!.userId);
   sendResponse(res, 200, null, 'Item deactivated');
 });

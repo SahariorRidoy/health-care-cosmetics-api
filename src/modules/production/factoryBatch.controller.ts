@@ -74,6 +74,6 @@ export const cancelFactoryBatch = asyncHandler(async (req: Request, res: Respons
 });
 
 export const deleteFactoryBatch = asyncHandler(async (req: Request, res: Response) => {
-  await factoryBatchService.deleteFactoryBatch(req.params.id);
+  await factoryBatchService.deleteFactoryBatch(req.params.id, (req as AuthRequest).user!.userId);
   sendResponse(res, 200, null, 'Factory batch deleted');
 });

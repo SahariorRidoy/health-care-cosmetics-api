@@ -672,9 +672,22 @@ export async function repurchaseItem(id: string, data: {
   }
 }
 
-export async function deleteItem(id: string) {
+export async function deleteItem(id: string, userId: string) {
   const item = await Item.findById(id);
   if (!item) throw new AppError('Item not found', 404);
+
+  // Zero out stock in all warehouses via ADJUSTMENT movements
+  const balances = await (await import('./stock.model')).StockBalance.find({ item: id, quantity: { $gt: 0 } });
+  for (const balance of balances) {
+    await postMovement({
+      type: 'ITEM_DELETED',
+      item: id,
+      warehouse: String(balance.warehouse),
+      quantity: -balance.quantity,
+      notes: `Stock cleared on item deletion`,
+      createdBy: userId,
+    });
+  }
 
   await Item.findByIdAndUpdate(id, { isActive: false });
   return item;
