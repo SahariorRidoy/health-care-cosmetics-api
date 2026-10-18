@@ -266,7 +266,7 @@ export async function createSalesOrder(
     }
 
     await session.commitTransaction();
-    return order;
+    return { order, invoiceId: invoice._id };
   } catch (err) {
     await session.abortTransaction();
     throw err;
@@ -656,8 +656,9 @@ export async function getCustomerDues(dealerId: string) {
   const [invoices, payments] = await Promise.all([
     Invoice.find({ dealer: dealerId, isActive: true, status: { $ne: 'CANCELLED' } })
       .populate('salesOrder', 'orderNumber')
+      .populate('items.item', 'name')
       .sort({ createdAt: -1 })
-      .select('invoiceNumber grossAmount totalCommission totalAmount paidAmount dueAmount status dueDate salesOrder createdAt commissionRate commissionAmount'),
+      .select('invoiceNumber grossAmount totalCommission totalAmount paidAmount dueAmount status dueDate salesOrder createdAt commissionRate commissionAmount items'),
     CustomerPayment.find({ dealer: dealerId, isActive: true })
       .sort({ paymentDate: -1 })
       .select('receiptNumber amount paymentDate method reference'),

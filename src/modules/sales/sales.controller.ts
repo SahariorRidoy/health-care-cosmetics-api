@@ -28,8 +28,8 @@ export const getSalesOrder = asyncHandler(async (req: Request, res: Response) =>
 
 export const createSalesOrder = asyncHandler(async (req: Request, res: Response) => {
   const data = createSalesOrderSchema.parse(req.body);
-  const order = await salesService.createSalesOrder(data, (req as AuthRequest).user!.userId);
-  sendResponse(res, 201, { salesOrder: order }, 'Sales order created');
+  const { order, invoiceId } = await salesService.createSalesOrder(data, (req as AuthRequest).user!.userId);
+  sendResponse(res, 201, { salesOrder: { ...order.toObject(), invoiceId } }, 'Sales order created');
 });
 
 export const updateSalesOrder = asyncHandler(async (req: Request, res: Response) => {
