@@ -1,4 +1,5 @@
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
+import type { ListSupplierPaymentsQuery } from './procurement.validator';
 import { GoodsReceipt } from './goodsReceipt.model';
 import { SupplierPayment } from './supplierPayment.model';
 import { PurchaseOrder } from './purchaseOrder.model';
@@ -283,17 +284,28 @@ export async function getSupplierPayments(supplierId: string, query: Record<stri
   return { payments, pagination: buildPagination(page, limit, total) };
 }
 
-export async function getAllSupplierPayments(query: Record<string, unknown>) {
+export async function getAllSupplierPayments(query: ListSupplierPaymentsQuery) {
   const { page, limit, skip } = parsePagination(query);
 
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.supplier) filter.supplier = query.supplier;
+  if (query.supplier) filter.supplier = new Types.ObjectId(query.supplier);
   if (query.method) filter.method = query.method;
   if (query.search) {
-    filter.$or = [{ paymentNumber: { $regex: String(query.search), $options: 'i' } }];
+    const regex = { $regex: query.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+    const matchingSuppliers = await Supplier.find({ name: regex }).select('_id');
+    filter.$or = [
+      { paymentNumber: regex },
+      ...(matchingSuppliers.length ? [{ supplier: { $in: matchingSuppliers.map((s) => s._id) } }] : []),
+    ];
+  }
+  if (query.from || query.to) {
+    filter.paymentDate = {
+      ...(query.from ? { $gte: new Date(query.from) } : {}),
+      ...(query.to ? { $lte: new Date(query.to) } : {}),
+    };
   }
 
-  const [payments, total] = await Promise.all([
+  const [payments, total, totalsAgg, byMethod] = await Promise.all([
     SupplierPayment.find(filter)
       .populate('supplier', 'name')
       .populate('purchaseOrder', 'poNumber')
@@ -302,9 +314,36 @@ export async function getAllSupplierPayments(query: Record<string, unknown>) {
       .skip(skip)
       .limit(limit),
     SupplierPayment.countDocuments(filter),
+    SupplierPayment.aggregate<{ totalAmount: number; largest: number; suppliers: unknown[] }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$amount' },
+          largest: { $max: '$amount' },
+          suppliers: { $addToSet: '$supplier' },
+        },
+      },
+    ]),
+    SupplierPayment.aggregate<{ _id: string; amount: number; count: number }>([
+      { $match: filter },
+      { $group: { _id: '$method', amount: { $sum: '$amount' }, count: { $sum: 1 } } },
+      { $sort: { amount: -1 } },
+    ]),
   ]);
 
-  return { payments, pagination: buildPagination(page, limit, total) };
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const totals = totalsAgg[0];
+  const stats = {
+    totalPayments: total,
+    totalAmount: round2(totals?.totalAmount ?? 0),
+    averageAmount: total > 0 ? round2((totals?.totalAmount ?? 0) / total) : 0,
+    largestAmount: round2(totals?.largest ?? 0),
+    suppliersPaid: totals?.suppliers.length ?? 0,
+    byMethod: byMethod.map((m) => ({ method: m._id, amount: round2(m.amount), count: m.count })),
+  };
+
+  return { payments, stats, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getSupplierPaymentById(id: string) {

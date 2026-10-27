@@ -13,8 +13,8 @@ export const generateSku = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getItems = asyncHandler(async (req: Request, res: Response) => {
-  const { items, pagination } = await itemService.getItems(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { items }, 'Items fetched', pagination);
+  const { items, stats, pagination } = await itemService.getItems(req.query as Record<string, unknown>);
+  sendResponse(res, 200, { items, stats }, 'Items fetched', pagination);
 });
 
 // New controller function to get finished goods

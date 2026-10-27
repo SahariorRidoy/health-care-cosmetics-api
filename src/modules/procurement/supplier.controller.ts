@@ -9,6 +9,11 @@ export const getSuppliers = asyncHandler(async (req: Request, res: Response) => 
   sendResponse(res, 200, { suppliers: items }, 'Suppliers fetched', pagination);
 });
 
+export const getSupplierSummary = asyncHandler(async (_req: Request, res: Response) => {
+  const summary = await supplierService.getSupplierSummary();
+  sendResponse(res, 200, summary, 'Supplier summary fetched');
+});
+
 export const getSupplier = asyncHandler(async (req: Request, res: Response) => {
   const supplier = await supplierService.getSupplierById(req.params.id);
   sendResponse(res, 200, { supplier }, 'Supplier fetched');

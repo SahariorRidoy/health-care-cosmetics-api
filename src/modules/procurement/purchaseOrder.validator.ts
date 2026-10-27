@@ -26,6 +26,24 @@ export const updatePOStatusSchema = z.object({
   status: z.enum(['CONFIRMED', 'CLOSED']),
 });
 
+export const listPOQuerySchema = z
+  .object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: z.string().trim().optional(),
+    supplier: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid supplier').optional(),
+    status: z.enum(['DRAFT', 'CONFIRMED', 'RECEIVED', 'CLOSED']).optional(),
+    paymentStatus: z.enum(['UNPAID', 'PARTIAL', 'PAID']).optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((q) => !q.from || !q.to || new Date(q.from) <= new Date(q.to), {
+    message: '"from" date must be before "to" date',
+    path: ['from'],
+  });
+
+export type ListPOQuery = z.infer<typeof listPOQuerySchema>;
+
 export const updatePaymentSchema = z.object({
   paidAmount: z.number().min(0, 'Paid amount must be 0 or more'),
 });

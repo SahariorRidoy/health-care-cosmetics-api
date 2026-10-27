@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../common/utils/asyncHandler';
 import { sendResponse } from '../../common/utils/response';
 import * as procurementService from './procurement.service';
-import { createGRSchema, createSupplierPaymentSchema, createSupplierPaymentFIFOSchema } from './procurement.validator';
+import { createGRSchema, createSupplierPaymentSchema, createSupplierPaymentFIFOSchema, listSupplierPaymentsQuerySchema } from './procurement.validator';
 import { AuthRequest } from '../../common/middleware/protect';
 
 // ── Goods Receipt ─────────────────────────────────────────────────────────────
@@ -43,8 +43,9 @@ export const createSupplierPaymentFIFO = asyncHandler(async (req: Request, res: 
 });
 
 export const getAllSupplierPayments = asyncHandler(async (req: Request, res: Response) => {
-  const { payments, pagination } = await procurementService.getAllSupplierPayments(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { payments }, 'Payments fetched', pagination);
+  const query = listSupplierPaymentsQuerySchema.parse(req.query);
+  const { payments, stats, pagination } = await procurementService.getAllSupplierPayments(query);
+  sendResponse(res, 200, { payments, stats }, 'Payments fetched', pagination);
 });
 
 export const getSupplierPaymentById = asyncHandler(async (req: Request, res: Response) => {

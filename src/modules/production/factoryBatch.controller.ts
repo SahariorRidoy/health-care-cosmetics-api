@@ -13,8 +13,8 @@ import {
 import { AuthRequest } from '../../common/middleware/protect';
 
 export const getFactoryBatches = asyncHandler(async (req: Request, res: Response) => {
-  const { items, pagination } = await factoryBatchService.getFactoryBatches(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { factoryBatches: items }, 'Factory batches fetched', pagination);
+  const { items, stats, pagination } = await factoryBatchService.getFactoryBatches(req.query as Record<string, unknown>);
+  sendResponse(res, 200, { factoryBatches: items, stats }, 'Factory batches fetched', pagination);
 });
 
 export const getFactoryBatch = asyncHandler(async (req: Request, res: Response) => {
@@ -45,7 +45,7 @@ export const dispatchMaterials = asyncHandler(async (req: Request, res: Response
 });
 
 export const updateStatus = asyncHandler(async (req: Request, res: Response) => {
-  const { status } = z.object({ status: z.enum(['IN_PRODUCTION']) }).parse(req.body);
+  const { status } = z.object({ status: z.enum(['IN_PRODUCTION', 'COMPLETED']) }).parse(req.body);
   const batch = await factoryBatchService.updateStatus(req.params.id, status);
   sendResponse(res, 200, { factoryBatch: batch }, 'Factory batch status updated');
 });

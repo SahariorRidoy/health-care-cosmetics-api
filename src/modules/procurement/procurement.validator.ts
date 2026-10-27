@@ -31,6 +31,23 @@ export const createSupplierPaymentSchema = z.object({
   notes: z.string().trim().optional(),
 });
 
+export const listSupplierPaymentsQuerySchema = z
+  .object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: z.string().trim().optional(),
+    supplier: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid supplier').optional(),
+    method: z.string().trim().max(50).optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((q) => !q.from || !q.to || new Date(q.from) <= new Date(q.to), {
+    message: '"from" date must be before "to" date',
+    path: ['from'],
+  });
+
+export type ListSupplierPaymentsQuery = z.infer<typeof listSupplierPaymentsQuerySchema>;
+
 export const createSupplierPaymentFIFOSchema = z.object({
   supplier: z.string().min(1, 'Supplier is required'),
   amount: z.number().min(0.01, 'Amount must be greater than 0'),

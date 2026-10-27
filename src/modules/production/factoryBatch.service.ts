@@ -1,5 +1,5 @@
 import mongoose, { Types } from 'mongoose';
-import { FactoryBatch } from './factoryBatch.model';
+import { FactoryBatch, IFactoryBatchDocument } from './factoryBatch.model';
 import { Item } from '../inventory/item.model';
 import { Warehouse } from '../warehouse/warehouse.model';
 import { postMovement } from '../inventory/stock.service';
@@ -24,6 +24,30 @@ async function generateReceiptNumber(batchId: string): Promise<string> {
   return `${prefix}-${String(count).padStart(4, '0')}`;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Quantity of each material still at the factory: dispatched − used in receipts − returned. */
+function remainingAtFactory(batch: IFactoryBatchDocument): Record<string, number> {
+  const remaining: Record<string, number> = {};
+  const add = (item: unknown, qty: number) => {
+    const key = String(item);
+    remaining[key] = (remaining[key] ?? 0) + qty;
+  };
+  for (const mat of batch.dispatch.materials) add(mat.item, mat.dispatchedQty);
+  for (const receipt of batch.receipts) {
+    for (const product of receipt.products) {
+      for (const mu of product.materialsUsed) add(mu.item, -mu.usedQty);
+    }
+  }
+  for (const ret of batch.materialReturns) {
+    for (const mat of ret.materials) add(mat.item, -mat.returnedQty);
+  }
+  for (const key of Object.keys(remaining)) remaining[key] = Math.round(remaining[key] * 1000) / 1000;
+  return remaining;
+}
+
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 export async function getFactoryBatches(query: Record<string, unknown>) {
@@ -31,11 +55,11 @@ export async function getFactoryBatches(query: Record<string, unknown>) {
   const filter: Record<string, unknown> = { isActive: true };
   if (query.status) filter.status = query.status;
   if (query.search) {
-    const regex = { $regex: String(query.search), $options: 'i' };
+    const regex = { $regex: escapeRegex(String(query.search)), $options: 'i' };
     filter.$or = [{ fbNumber: regex }, { batchName: regex }];
   }
 
-  const [items, total] = await Promise.all([
+  const [items, total, stats] = await Promise.all([
     FactoryBatch.find(filter)
       .populate('warehouse', 'name code')
       .populate('dispatch.materials.item', 'name sku costPrice')
@@ -44,9 +68,49 @@ export async function getFactoryBatches(query: Record<string, unknown>) {
       .skip(skip)
       .limit(limit),
     FactoryBatch.countDocuments(filter),
+    getFactoryBatchStats(),
   ]);
 
-  return { items, pagination: buildPagination(page, limit, total) };
+  return { items, stats, pagination: buildPagination(page, limit, total) };
+}
+
+/** Header totals across all active batches (independent of list filters). */
+async function getFactoryBatchStats() {
+  const batches = await FactoryBatch.find({ isActive: true })
+    .select('status dispatch.materials receipts materialReturns')
+    .lean<IFactoryBatchDocument[]>();
+
+  let active = 0;
+  let drafts = 0;
+  let completed = 0;
+  let sentValue = 0;
+  let atFactoryValue = 0;
+  let receivedValue = 0;
+
+  for (const b of batches) {
+    if (b.status === 'DRAFT') drafts += 1;
+    if (b.status === 'COMPLETED') completed += 1;
+    if (['DISPATCHED', 'IN_PRODUCTION', 'PARTIALLY_RECEIVED'].includes(b.status)) active += 1;
+    if (b.status === 'DRAFT' || b.status === 'CANCELLED') continue;
+
+    const remaining = remainingAtFactory(b);
+    for (const mat of b.dispatch.materials) {
+      sentValue += mat.dispatchedQty * mat.unitCost;
+      atFactoryValue += Math.max(0, remaining[String(mat.item)] ?? 0) * mat.unitCost;
+    }
+    for (const r of b.receipts) {
+      receivedValue += r.deliveryCost + r.productionCost + r.otherCost;
+      for (const p of r.products) receivedValue += p.materialCost;
+    }
+  }
+
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    active, drafts, completed,
+    sentValue: round2(sentValue),
+    atFactoryValue: round2(atFactoryValue),
+    receivedValue: round2(receivedValue),
+  };
 }
 
 export async function getFactoryBatchById(id: string) {
@@ -236,10 +300,16 @@ export async function dispatchMaterials(id: string, createdBy: string) {
   }
 }
 
-export async function updateStatus(id: string, newStatus: 'IN_PRODUCTION') {
+export async function updateStatus(id: string, newStatus: 'IN_PRODUCTION' | 'COMPLETED') {
   const batch = await FactoryBatch.findById(id);
   if (!batch || !batch.isActive) throw new AppError('Factory batch not found', 404);
-  if (batch.status !== 'DISPATCHED') throw new AppError('Batch must be DISPATCHED to mark as IN_PRODUCTION', 400);
+  if (newStatus === 'IN_PRODUCTION' && batch.status !== 'DISPATCHED') {
+    throw new AppError('Batch must be DISPATCHED to mark as IN_PRODUCTION', 400);
+  }
+  // Spec: "Completed" is marked manually once actual receipts have been recorded.
+  if (newStatus === 'COMPLETED' && (batch.status !== 'PARTIALLY_RECEIVED' || batch.receipts.length === 0)) {
+    throw new AppError('Only batches with at least one production receipt can be completed', 400);
+  }
   batch.status = newStatus;
   await batch.save();
   return getFactoryBatchById(id);
@@ -570,13 +640,14 @@ export async function cancelFactoryBatch(id: string, createdBy: string) {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-      for (const mat of batch.dispatch.materials) {
-        if (mat.dispatchedQty > 0) {
+      // Restore only what is still at the factory — returned material was already restocked.
+      for (const [itemId, qty] of Object.entries(remainingAtFactory(batch))) {
+        if (qty > 0) {
           await postMovement({
             type: 'FACTORY_DISPATCH',
-            item: String(mat.item),
+            item: itemId,
             warehouse: String(batch.warehouse),
-            quantity: mat.dispatchedQty, // positive = return to stock
+            quantity: qty, // positive = return to stock
             reference: batch.fbNumber,
             referenceModel: 'FactoryBatch',
             referenceId: String(batch._id),
@@ -607,33 +678,14 @@ export async function deleteFactoryBatch(id: string, createdBy: string) {
   const batch = await FactoryBatch.findById(id);
   if (!batch || !batch.isActive) throw new AppError('Factory batch not found', 404);
 
-  // For DRAFT: simple soft-delete, no stock movements needed
-  if (batch.status === 'DRAFT') {
+  // DRAFT never moved stock; CANCELLED already reversed its dispatch on cancel.
+  if (batch.status === 'DRAFT' || batch.status === 'CANCELLED') {
     batch.isActive = false;
     return batch.save();
   }
 
-  // For any dispatched status: calculate remaining factory stock per material and restock
-  const remainingMap: Record<string, number> = {};
-
-  for (const mat of batch.dispatch.materials) {
-    const key = String(mat.item);
-    remainingMap[key] = (remainingMap[key] ?? 0) + mat.dispatchedQty;
-  }
-  for (const receipt of batch.receipts) {
-    for (const product of receipt.products) {
-      for (const mu of product.materialsUsed) {
-        const key = String(mu.item);
-        remainingMap[key] = (remainingMap[key] ?? 0) - mu.usedQty;
-      }
-    }
-  }
-  for (const ret of batch.materialReturns) {
-    for (const mat of ret.materials) {
-      const key = String(mat.item);
-      remainingMap[key] = (remainingMap[key] ?? 0) - mat.returnedQty;
-    }
-  }
+  // For any dispatched status: restock whatever is still at the factory
+  const remainingMap = remainingAtFactory(batch);
 
   const session = await mongoose.startSession();
   session.startTransaction();

@@ -1,4 +1,6 @@
+import { Types } from 'mongoose';
 import { PurchaseOrder, POStatus } from './purchaseOrder.model';
+import type { ListPOQuery } from './purchaseOrder.validator';
 import { GoodsReceipt } from './goodsReceipt.model';
 import { Supplier } from './supplier.model';
 import { Item } from '../inventory/item.model';
@@ -13,25 +15,39 @@ async function generatePONumber(): Promise<string> {
   return `${prefix}-${String(count + 1).padStart(4, '0')}`;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function calcTotals(items: { orderedQty: number; unitPrice: number }[]) {
   const subtotal = items.reduce((sum, i) => sum + i.orderedQty * i.unitPrice, 0);
   return { subtotal: Math.round(subtotal * 100) / 100, totalAmount: Math.round(subtotal * 100) / 100 };
 }
 
-export async function getPurchaseOrders(query: Record<string, unknown>) {
+export async function getPurchaseOrders(query: ListPOQuery) {
   const { page, limit, skip } = parsePagination(query);
 
   const filter: Record<string, unknown> = { isActive: true };
-  if (query.supplier) filter.supplier = query.supplier;
+  if (query.supplier) filter.supplier = new Types.ObjectId(query.supplier);
   if (query.status) filter.status = query.status;
   if (query.paymentStatus) filter.paymentStatus = query.paymentStatus;
   if (query.search) {
-    const regex = { $regex: String(query.search), $options: 'i' };
-    filter.$or = [{ poNumber: regex }];
+    const regex = { $regex: escapeRegex(query.search), $options: 'i' };
+    const matchingSuppliers = await Supplier.find({ name: regex }).select('_id');
+    filter.$or = [
+      { poNumber: regex },
+      ...(matchingSuppliers.length ? [{ supplier: { $in: matchingSuppliers.map((s) => s._id) } }] : []),
+    ];
+  }
+  if (query.from || query.to) {
+    filter.createdAt = {
+      ...(query.from ? { $gte: new Date(query.from) } : {}),
+      ...(query.to ? { $lte: new Date(query.to) } : {}),
+    };
   }
   const unpaidFilter = { ...filter, paymentStatus: 'UNPAID' };
 
-  const [items, total, unpaidCount] = await Promise.all([
+  const [items, total, unpaidCount, statsAgg] = await Promise.all([
     PurchaseOrder.find(filter)
       .populate('supplier', 'name')
       .populate('items.item', 'name sku')
@@ -41,9 +57,38 @@ export async function getPurchaseOrders(query: Record<string, unknown>) {
       .limit(limit),
     PurchaseOrder.countDocuments(filter),
     PurchaseOrder.countDocuments(unpaidFilter),
+    PurchaseOrder.aggregate<{
+      totalAmount: number; totalPaid: number; totalDue: number;
+      paidCount: number; partialCount: number; unpaidCount: number;
+    }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: '$totalAmount' },
+          totalPaid: { $sum: { $ifNull: ['$paidAmount', 0] } },
+          totalDue: { $sum: { $max: [0, { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] }] } },
+          paidCount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'PAID'] }, 1, 0] } },
+          partialCount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'PARTIAL'] }, 1, 0] } },
+          unpaidCount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'UNPAID'] }, 1, 0] } },
+        },
+      },
+    ]),
   ]);
 
-  return { items, unpaidCount, pagination: buildPagination(page, limit, total) };
+  const s = statsAgg[0];
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const stats = {
+    totalOrders: total,
+    totalAmount: round2(s?.totalAmount ?? 0),
+    totalPaid: round2(s?.totalPaid ?? 0),
+    totalDue: round2(s?.totalDue ?? 0),
+    paidCount: s?.paidCount ?? 0,
+    partialCount: s?.partialCount ?? 0,
+    unpaidCount: s?.unpaidCount ?? 0,
+  };
+
+  return { items, unpaidCount, stats, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getPurchaseOrderById(id: string) {

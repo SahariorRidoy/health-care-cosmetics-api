@@ -1,5 +1,5 @@
 
-import mongoose from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { Item, ItemType } from './item.model';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
@@ -55,20 +55,26 @@ export async function getItems(query: Record<string, unknown>) {
     const regex = { $regex: String(query.search), $options: 'i' };
     filter.$or = [{ name: regex }, { sku: regex }];
   }
-  if (query.isActive !== undefined) filter.isActive = query.isActive === 'true';
+  if (query.isActive === 'all') delete filter.isActive;
+  else if (query.isActive !== undefined) filter.isActive = query.isActive === 'true';
   if (query.type) {
     filter.type = query.type;
   } else {
     filter.type = { $ne: 'FINISHED_GOOD' };
   }
-  if (query.supplier) filter.supplier = query.supplier;
+  if (query.supplier && Types.ObjectId.isValid(String(query.supplier))) {
+    filter.supplier = new Types.ObjectId(String(query.supplier));
+  }
+  if (query.lowStock === 'true') {
+    filter.$expr = { $and: [{ $gt: ['$reorderLevel', 0] }, { $lte: ['$currentStock', '$reorderLevel'] }] };
+  }
 
   const sortField = String(query.sortBy ?? 'createdAt');
   const sortOrder = query.sortDir === 'asc' ? 1 : -1;
   const allowedSorts: Record<string, string> = { name: 'name', createdAt: 'createdAt', currentStock: 'currentStock', costPrice: 'costPrice' };
   const sortKey = allowedSorts[sortField] ?? 'createdAt';
 
-  const [items, total] = await Promise.all([
+  const [items, total, statsAgg] = await Promise.all([
     Item.find(filter)
       .populate('baseUom', 'name symbol')
       .populate('supplier', 'name')
@@ -78,10 +84,37 @@ export async function getItems(query: Record<string, unknown>) {
       .skip(skip)
       .limit(limit),
     Item.countDocuments(filter),
+    Item.aggregate<{ stockValue: number; saleValue: number; active: number; lowStock: number; outOfStock: number }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          stockValue: { $sum: { $multiply: [{ $max: [0, '$currentStock'] }, '$costPrice'] } },
+          saleValue: { $sum: { $multiply: [{ $max: [0, '$currentStock'] }, { $ifNull: ['$salePrice', 0] }] } },
+          active: { $sum: { $cond: ['$isActive', 1, 0] } },
+          lowStock: {
+            $sum: {
+              $cond: [{ $and: [{ $gt: ['$reorderLevel', 0] }, { $lte: ['$currentStock', '$reorderLevel'] }] }, 1, 0],
+            },
+          },
+          outOfStock: { $sum: { $cond: [{ $lte: ['$currentStock', 0] }, 1, 0] } },
+        },
+      },
+    ]),
   ]);
 
+  const s = statsAgg[0];
+  const stats = {
+    totalItems: total,
+    stockValue: Math.round((s?.stockValue ?? 0) * 100) / 100,
+    saleValue: Math.round((s?.saleValue ?? 0) * 100) / 100,
+    activeItems: s?.active ?? 0,
+    lowStock: s?.lowStock ?? 0,
+    outOfStock: s?.outOfStock ?? 0,
+  };
+
   if (query.type !== 'FINISHED_GOOD' || items.length === 0) {
-    return { items, pagination: buildPagination(page, limit, total) };
+    return { items, stats, pagination: buildPagination(page, limit, total) };
   }
 
   const itemIds = items.map((item) => item._id);
@@ -131,7 +164,7 @@ export async function getItems(query: Record<string, unknown>) {
     productionSources: sourcesByItem.get(String(item._id)) ?? [],
   }));
 
-  return { items: enrichedItems, pagination: buildPagination(page, limit, total) };
+  return { items: enrichedItems, stats, pagination: buildPagination(page, limit, total) };
 }
 
 export async function getFinishedGoods(query: Record<string, unknown>) {

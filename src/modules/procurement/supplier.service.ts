@@ -1,7 +1,39 @@
 import { Supplier } from './supplier.model';
 import { PurchaseOrder } from './purchaseOrder.model';
+import { SupplierPayment } from './supplierPayment.model';
 import { AppError } from '../../common/utils/errors';
 import { parsePagination, buildPagination } from '../../common/utils/response';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export async function getSupplierSummary() {
+  const supplierIds = await Supplier.find({ isActive: true }).distinct('_id');
+
+  const [perSupplier, paid] = await Promise.all([
+    PurchaseOrder.aggregate<{ _id: unknown; purchased: number; due: number }>([
+      { $match: { isActive: true, supplier: { $in: supplierIds } } },
+      {
+        $group: {
+          _id: '$supplier',
+          purchased: { $sum: '$totalAmount' },
+          due: { $sum: { $max: [0, { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] }] } },
+        },
+      },
+    ]),
+    SupplierPayment.aggregate<{ total: number }>([
+      { $match: { isActive: true, supplier: { $in: supplierIds } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+  ]);
+
+  return {
+    totalSuppliers: supplierIds.length,
+    suppliersWithDue: perSupplier.filter((s) => s.due > 0.005).length,
+    totalPurchased: round2(perSupplier.reduce((sum, s) => sum + s.purchased, 0)),
+    totalPaid: round2(paid[0]?.total ?? 0),
+    totalDue: round2(perSupplier.reduce((sum, s) => sum + s.due, 0)),
+  };
+}
 
 export async function getSuppliers(query: Record<string, unknown>) {
   const { page, limit, skip } = parsePagination(query);

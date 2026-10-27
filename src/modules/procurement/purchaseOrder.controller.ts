@@ -2,13 +2,14 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../../common/utils/asyncHandler';
 import { sendResponse } from '../../common/utils/response';
 import * as poService from './purchaseOrder.service';
-import { createPOSchema, updatePOSchema, updatePOStatusSchema, updatePaymentSchema } from './purchaseOrder.validator';
+import { createPOSchema, updatePOSchema, updatePOStatusSchema, updatePaymentSchema, listPOQuerySchema } from './purchaseOrder.validator';
 import { AuthRequest } from '../../common/middleware/protect';
 import { POStatus } from './purchaseOrder.model';
 
 export const getPurchaseOrders = asyncHandler(async (req: Request, res: Response) => {
-  const { items, unpaidCount, pagination } = await poService.getPurchaseOrders(req.query as Record<string, unknown>);
-  sendResponse(res, 200, { purchaseOrders: items, unpaidCount }, 'Purchase orders fetched', pagination);
+  const query = listPOQuerySchema.parse(req.query);
+  const { items, unpaidCount, stats, pagination } = await poService.getPurchaseOrders(query);
+  sendResponse(res, 200, { purchaseOrders: items, unpaidCount, stats }, 'Purchase orders fetched', pagination);
 });
 
 export const getPurchaseOrder = asyncHandler(async (req: Request, res: Response) => {
