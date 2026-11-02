@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDealers, getDealer, createDealer, updateDealer, deleteDealer } from './dealer.controller';
+import { getDealers, getDealer, getDealerSummary, createDealer, updateDealer, deleteDealer } from './dealer.controller';
 import { protect } from '../../common/middleware/protect';
 import { requirePermission } from '../../common/middleware/requirePermission';
 import { PERMISSIONS } from '../permissions/permissions.constants';
@@ -8,6 +8,7 @@ const router = Router();
 router.use(protect);
 
 router.get('/', requirePermission(PERMISSIONS.SALES_VIEW), getDealers);
+router.get('/:id/summary', requirePermission(PERMISSIONS.SALES_VIEW), getDealerSummary);
 router.get('/:id', requirePermission(PERMISSIONS.SALES_VIEW), getDealer);
 router.post('/', requirePermission(PERMISSIONS.SALES_CREATE), createDealer);
 router.patch('/:id', requirePermission(PERMISSIONS.SALES_UPDATE), updateDealer);

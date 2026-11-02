@@ -22,6 +22,9 @@ export interface ISalesOrderDocument extends Document {
   grossAmount: number;      // sum of qty * unitPrice (before commission)
   totalCommission: number;  // sum of commissionAmount per line
   subtotal: number;         // net amount dealer pays (grossAmount - totalCommission)
+  discountType: 'NONE' | 'PERCENT' | 'AMOUNT';
+  discountValue: number;    // % or ৳ as entered
+  discountAmount: number;   // ৳ deducted from subtotal before tax
   taxPercent: number;
   taxAmount: number;
   totalAmount: number;      // subtotal + tax
@@ -60,6 +63,9 @@ const salesOrderSchema = new Schema<ISalesOrderDocument>(
     grossAmount: { type: Number, required: true, min: 0 },
     totalCommission: { type: Number, default: 0, min: 0 },
     subtotal: { type: Number, required: true, min: 0 },
+    discountType: { type: String, enum: ['NONE', 'PERCENT', 'AMOUNT'], default: 'NONE' },
+    discountValue: { type: Number, default: 0, min: 0 },
+    discountAmount: { type: Number, default: 0, min: 0 },
     taxPercent: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },

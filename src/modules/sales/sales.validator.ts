@@ -10,12 +10,18 @@ const orderItemSchema = z.object({
   uom: z.string().min(1),
 });
 
+const discountSchema = z.object({
+  type: z.enum(['PERCENT', 'AMOUNT']),
+  value: z.number().min(0, 'Discount must be ≥ 0'),
+}).refine((d) => d.type !== 'PERCENT' || d.value <= 100, { message: 'Discount % cannot exceed 100', path: ['value'] });
+
 export const createSalesOrderSchema = z.object({
   dealer: z.string().min(1, 'Dealer is required'),
   warehouse: z.string().min(1, 'Warehouse is required'),
   items: z.array(orderItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
   commissionRate: z.number().min(0).max(100).default(0),
+  discount: discountSchema.optional(),
   notes: z.string().trim().optional(),
   payment: z.object({
     amount: z.number().positive(),
@@ -46,6 +52,7 @@ export const createInvoiceSchema = z.object({
   items: z.array(invoiceItemSchema).min(1, 'At least one item required'),
   taxPercent: z.number().min(0).max(100).default(0),
   commissionRate: z.number().min(0).max(100).default(0),
+  discount: discountSchema.optional(),
   dueDate: z.string().optional(),
   notes: z.string().trim().optional(),
 });

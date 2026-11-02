@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { SalesOrder, SalesOrderStatus } from './salesOrder.model';
+import { SalesOrder } from './salesOrder.model';
 import { Invoice } from './invoice.model';
 import { CustomerPayment } from './customerPayment.model';
 import { Dealer } from './dealer.model';
@@ -41,16 +41,26 @@ function buildItems(rawItems: RawItem[]) {
   });
 }
 
+export interface OrderDiscount { type: 'PERCENT' | 'AMOUNT'; value: number }
+
+// Gross − line commission = subtotal → − order discount → + tax on discounted amount = total
 function calcTotals(
   items: ReturnType<typeof buildItems>,
   taxPercent: number,
+  discount?: OrderDiscount,
 ) {
   const grossAmount = round2(items.reduce((s, i) => s + i.qty * i.unitPrice, 0));
   const totalCommission = round2(items.reduce((s, i) => s + i.commissionAmount, 0));
   const subtotal = round2(grossAmount - totalCommission);
-  const taxAmount = round2(subtotal * (taxPercent / 100));
-  const totalAmount = round2(subtotal + taxAmount);
-  return { grossAmount, totalCommission, subtotal, taxAmount, totalAmount };
+  const discountValue = discount && discount.value > 0 ? discount.value : 0;
+  const discountType = discountValue > 0 && discount ? discount.type : 'NONE';
+  const discountAmount = discountType === 'PERCENT'
+    ? round2(subtotal * (discountValue / 100))
+    : discountType === 'AMOUNT' ? round2(Math.min(discountValue, subtotal)) : 0;
+  const taxableAmount = round2(subtotal - discountAmount);
+  const taxAmount = round2(taxableAmount * (taxPercent / 100));
+  const totalAmount = round2(taxableAmount + taxAmount);
+  return { grossAmount, totalCommission, subtotal, discountType, discountValue, discountAmount, taxAmount, totalAmount };
 }
 
 async function generateOrderNumber(): Promise<string> {
@@ -142,6 +152,7 @@ export async function createSalesOrder(
     commissionRate: number;
     notes?: string;
     status?: string;
+    discount?: OrderDiscount;
     payment?: { amount: number; method: string; reference?: string; notes?: string };
   },
   createdBy: string,
@@ -162,7 +173,10 @@ export async function createSalesOrder(
 
   const orderNumber = await generateOrderNumber();
   const soItems = buildItems(data.items);
-  const { grossAmount, totalCommission, subtotal, taxAmount, totalAmount } = calcTotals(soItems, data.taxPercent);
+  const {
+    grossAmount, totalCommission, subtotal, discountType, discountValue, discountAmount, taxAmount, totalAmount,
+  } = calcTotals(soItems, data.taxPercent, data.discount);
+  const discountFields = { discountType, discountValue, discountAmount };
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -175,6 +189,7 @@ export async function createSalesOrder(
       grossAmount,
       totalCommission,
       subtotal,
+      ...discountFields,
       taxPercent: data.taxPercent,
       taxAmount,
       totalAmount,
@@ -227,6 +242,7 @@ export async function createSalesOrder(
       grossAmount,
       totalCommission,
       subtotal,
+      ...discountFields,
       taxPercent: data.taxPercent,
       taxAmount,
       totalAmount,
@@ -411,6 +427,7 @@ export async function createInvoice(
     commissionRate: number;
     dueDate?: string;
     notes?: string;
+    discount?: OrderDiscount;
   },
   createdBy: string,
 ) {
@@ -419,7 +436,9 @@ export async function createInvoice(
 
   const invoiceNumber = await generateInvoiceNumber();
   const items = buildItems(data.items);
-  const { grossAmount, totalCommission, subtotal, taxAmount, totalAmount } = calcTotals(items, data.taxPercent);
+  const {
+    grossAmount, totalCommission, subtotal, discountType, discountValue, discountAmount, taxAmount, totalAmount,
+  } = calcTotals(items, data.taxPercent, data.discount);
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -433,6 +452,9 @@ export async function createInvoice(
         grossAmount,
         totalCommission,
         subtotal,
+        discountType,
+        discountValue,
+        discountAmount,
         taxPercent: data.taxPercent,
         taxAmount,
         totalAmount,

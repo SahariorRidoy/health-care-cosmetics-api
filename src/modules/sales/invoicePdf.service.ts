@@ -306,6 +306,16 @@ export async function generateInvoicePDF(invoiceId: string, res: Response): Prom
 
   y += 6;
 
+  // Special discount — table "মোট টাকা" is already net of it
+  if ((invoice.discountAmount ?? 0) > 0) {
+    const label = invoice.discountType === 'PERCENT'
+      ? `বিশেষ ছাড় (${invoice.discountValue}%) ঃ`
+      : 'বিশেষ ছাড় ঃ';
+    doc.font('Bold').fontSize(8.5).fillColor('#000000')
+      .text(`${label} ${fmtAmt(invoice.discountAmount)}`, ML, y, { width: CW, align: 'right' });
+    y += 14;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // 7. টাকা (কথায়)
   // ══════════════════════════════════════════════════════════════════════════

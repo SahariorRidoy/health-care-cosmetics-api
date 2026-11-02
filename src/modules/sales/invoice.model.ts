@@ -23,6 +23,9 @@ export interface IInvoiceDocument extends Document {
   grossAmount: number;
   totalCommission: number;
   subtotal: number;
+  discountType: 'NONE' | 'PERCENT' | 'AMOUNT';
+  discountValue: number;
+  discountAmount: number;
   taxPercent: number;
   taxAmount: number;
   totalAmount: number;
@@ -63,6 +66,9 @@ const invoiceSchema = new Schema<IInvoiceDocument>(
     grossAmount: { type: Number, required: true, min: 0 },
     totalCommission: { type: Number, default: 0, min: 0 },
     subtotal: { type: Number, required: true, min: 0 },
+    discountType: { type: String, enum: ['NONE', 'PERCENT', 'AMOUNT'], default: 'NONE' },
+    discountValue: { type: Number, default: 0, min: 0 },
+    discountAmount: { type: Number, default: 0, min: 0 },
     taxPercent: { type: Number, default: 0, min: 0 },
     taxAmount: { type: Number, default: 0, min: 0 },
     totalAmount: { type: Number, required: true, min: 0 },

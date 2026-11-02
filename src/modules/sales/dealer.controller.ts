@@ -14,7 +14,12 @@ export const getDealer = asyncHandler(async (req: Request, res: Response) => {
   sendResponse(res, 200, { dealer }, 'Dealer fetched');
 });
 
-export const createDealer = asyncHandler(async (req: Request, res: Response) => {
+export const getDealerSummary = asyncHandler(async (req: Request, res: Response) => {
+  const summary = await dealerService.getDealerSummary(req.params.id);
+  sendResponse(res, 200, { summary }, 'Dealer summary fetched');
+});
+
+export const createDealer =asyncHandler(async (req: Request, res: Response) => {
   const data = createDealerSchema.parse(req.body);
   const dealer = await dealerService.createDealer(data);
   sendResponse(res, 201, { dealer }, 'Dealer created');
